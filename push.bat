@@ -97,19 +97,26 @@ if errorlevel 1 echo (Nothing new to commit - will still push.)
 echo.
 echo Pushing to GitHub...
 git push -u origin main
-if errorlevel 1 (
-  echo.
-  echo [ERROR] Push failed. Common causes:
-  echo   - You are signed in as the wrong GitHub account.
-  echo   - The repo !REPO! does not exist yet.
-  echo   - The remote has commits you don't have locally
-  echo       ^(fix once with:  git push -u origin main --force^).
-  echo   - You need a Personal Access Token instead of a password.
-  echo.
-  pause
-  exit /b 1
-)
+if not errorlevel 1 goto :pushed
 
+REM --- normal push failed: it's usually because the remote has a commit
+REM     (like an auto-created README) that this folder doesn't have.
+REM     Retry once with a safe force that won't clobber a teammate's push.
+echo.
+echo Normal push was rejected. Retrying with a safe force...
+git push -u origin main --force-with-lease
+if not errorlevel 1 goto :pushed
+
+echo.
+echo [ERROR] Push still failed. Common causes:
+echo   - You are signed in as the wrong GitHub account.
+echo   - The repo !REPO! does not exist yet (create it on github.com).
+echo   - You need a Personal Access Token instead of a password.
+echo.
+pause
+exit /b 1
+
+:pushed
 echo.
 echo ===========================================
 echo   Done. Changes are on GitHub.
