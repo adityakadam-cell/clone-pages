@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Agent 8 — Verify{% endblock %}
+{% block body %}
+  <h2>Agent 8 — Verify (page vs document)</h2>
+  <p class="hint">Re-checks each built page against its source document before download.</p>
+  <div id="loader" class="loader"><div class="spinner"></div><span>Checking pages…</span></div>
+  <div id="summary" class="board"></div>
+  <div id="reports" class="verify-list"></div>
+  <div class="actions" id="nav8" style="display:none">
+    <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
+    <a class="btn primary" href="{{ url_for('agent', n=nxt) }}">Continue to download &rarr;</a>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+fetch("{{ url_for('api_agent8') }}", {method:"POST"}).then(r=>r.json()).then(r=>{
+  document.getElementById("loader").style.display="none";
+  const d=r.data;
+  document.getElementById("summary").innerHTML =
+    `<div class="req ${d.all_ok?'ok':''}"><span class="tag">${d.all_ok?'All passed':'Needs attention'}</span> ${r.message}</div>`;
+  document.getElementById("reports").innerHTML = (d.reports||[]).map(p => `
+    <div class="vcard ${p.ok?'pass':'fail'}">
+      <div class="vhead">
+        <span class="vstatus">${p.ok?'✓':'✕'}</span>
+        <span class="vname">${p.product}</span>
+        <span class="vfile">${p.filename}</span>
+      </div>
+      <ul class="vchecks">
+        ${p.checks.map(c => `
+          <li class="${c.ok?'ok':'no'}">
+            <span class="vmark">${c.ok?'✓':'✕'}</span>
+            <span class="vlabel">${c.name}</span>
+            <span class="vnote">${c.note||''}</span>
+          </li>`).join("")}
+      </ul>
+    </div>`).join("");
+  document.getElementById("nav8").style.display="flex";
+});
+</script>
+{% endblock %}

@@ -107,3 +107,20 @@ a.dl:hover{text-decoration:underline}
   .issue-grid{grid-template-columns:1fr}
 }
 @media (max-width:560px){ .preview-grid{grid-template-columns:1fr} }
+
+/* ---- Agent 8: verify report ---- */
+.verify-list{display:grid;gap:12px;margin:14px 0}
+.vcard{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--ok);border-radius:10px;padding:14px}
+.vcard.fail{border-left-color:var(--danger)}
+.vhead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.vstatus{font-weight:800}
+.vcard.pass .vstatus{color:var(--ok)} .vcard.fail .vstatus{color:var(--danger)}
+.vname{font-size:15px;font-weight:700}
+.vfile{font-size:12px;color:var(--muted);margin-left:auto;word-break:break-all}
+.vchecks{list-style:none;margin:0;padding:0;display:grid;gap:5px}
+.vchecks li{display:flex;align-items:baseline;gap:8px;font-size:13px}
+.vchecks .vmark{font-weight:700}
+.vchecks li.ok .vmark{color:var(--ok)} .vchecks li.no .vmark{color:var(--danger)}
+.vlabel{font-weight:600;min-width:170px}
+.vnote{color:var(--muted)}
+@media (max-width:560px){ .vlabel{min-width:0} .vchecks li{flex-wrap:wrap} }

@@ -31,6 +31,7 @@ from agents import (
     agent5_recheck_sync as a5,
     agent6_output as a6,
     agent7_preview_approve as a7,
+    agent8_verify as a8,
 )
 
 logging.basicConfig(
@@ -102,8 +103,8 @@ def _persist(resp):
 
 
 FLOW = Config.AGENT_ORDER  # [1, 2, 3, 4, 5, 7, 6]
-LABELS = {1: "URL", 2: "Design", 3: "Content",
-          4: "Analyze", 5: "Sync", 7: "Approve", 6: "Download"}
+LABELS = {1: "URL", 2: "Design", 3: "Content", 4: "Analyze",
+          5: "Sync", 7: "Approve", 8: "Verify", 6: "Download"}
 
 
 def _next(agent: int) -> int:
@@ -236,7 +237,14 @@ def post_agent7():
         return redirect(url_for("agent", n=7))
     sdata()["built"] = build["data"]["built"]
     flash(build["message"], "ok")
-    return redirect(url_for("agent", n=6))
+    return redirect(url_for("agent", n=8))
+
+
+@app.route("/api/agent8/verify", methods=["POST"])
+def api_agent8():
+    res = a8.run(sdata())
+    sdata()["agent8"] = res["data"]
+    return jsonify(res)
 
 
 @app.route("/download/<path:filename>")

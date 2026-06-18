@@ -6,7 +6,8 @@ Two modes:
   B) Google Sheet : read mapped columns (Product, Doc, Meta Title,
                     Meta Description, Url (link)). The Doc cell usually links
                     to a Google Doc, so the real content is fetched from that
-                    link (needs a Google API key to recover the hyperlink).
+                    link (needs a Google API key to recover the hyperlink and
+                    to read the Doc via the Docs API).
 """
 import uuid
 from werkzeug.utils import secure_filename
@@ -54,7 +55,7 @@ def run_files(files):
               f"Loaded {len(pages)} file(s).")
 
 
-def _doc_content(rec):
+def _doc_content(rec, api_key: str = ""):
     """Resolve the real content for a sheet row.
 
     Order of preference:
@@ -68,7 +69,7 @@ def _doc_content(rec):
 
     target = link or (value if is_url(value) else "")
     if target:
-        text, err = safe_fetch(target)
+        text, err = safe_fetch(target, api_key=api_key)
         if text:
             return text, ""
         return value, f"could not fetch doc link ({err})"
@@ -94,7 +95,7 @@ def run_sheet(sheet_url, api_key: str = ""):
 
     pages, fetched, notes = [], 0, []
     for r in rows:
-        content, note = _doc_content(r)
+        content, note = _doc_content(r, api_key=api_key)
         if note:
             notes.append(f"{r.get('product','?')}: {note}")
         if content and content != (r.get("doc") or "").strip():
@@ -111,7 +112,7 @@ def run_sheet(sheet_url, api_key: str = ""):
 
     msg = f"Read {len(pages)} rows; fetched content for {fetched} page(s)."
     if not used_api:
-        msg += (" (No Google API key set - Doc hyperlinks can't be read, so "
+        msg += (" (No Google API key set - Doc links can't be read, so "
                 "content was taken from the cell text only.)")
     data = {"mode": "sheet", "pages": pages, "count": len(pages),
             "fetched": fetched, "used_api": used_api, "notes": notes[:20]}
