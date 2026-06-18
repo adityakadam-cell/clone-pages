@@ -1,9 +1,13 @@
 """
 Agent 6 — Output & download.
 
-Build each approved page into a standalone HTML file using the design
-captured in Agent 2, then offer single + bulk (zip) downloads.
+Build each approved page into a standalone HTML file:
+  * Design (CSS + JS) is the one captured from the provided HTML in Agent 2.
+  * Content is the text fetched from that row's Doc (Agent 3), formatted
+    into readable paragraphs.
+Then offer single + bulk (zip) downloads.
 """
+import re
 import zipfile
 from html import escape
 
@@ -29,28 +33,56 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
+_HTML_TAG = re.compile(r"<(p|div|h[1-6]|ul|ol|li|section|article|table|img|br)\b", re.I)
+
 
 def _design(state):
     return state.get("agent2", {}) or {}
 
 
 def _css_block(design):
-    out = [f'  <link rel="stylesheet" href="{escape(h)}">' for h in design.get("css_links", [])]
+    """All stylesheets + inline <style> from the reference page."""
+    out = [f'  <link rel="stylesheet" href="{escape(h)}">'
+           for h in design.get("css_links", [])]
     for css in design.get("inline_css", []):
-        out.append(f"  <style>{css}</style>")
+        if css and css.strip():
+            out.append(f"  <style>{css}</style>")
     return "\n".join(out)
 
 
-def _js_block(design):
-    out = [f'  <script src="{escape(s)}"></script>' for s in design.get("js_links", [])]
+def _js_block(design, template_html=""):
+    """External scripts + inline scripts (de-duped against the body template,
+    so head-level inline JS is preserved without duplicating body scripts)."""
+    out = [f'  <script src="{escape(s)}"></script>'
+           for s in design.get("js_links", [])]
+    for js in design.get("inline_js", []):
+        if js and js.strip() and js.strip() not in (template_html or ""):
+            out.append(f"  <script>{js}</script>")
     return "\n".join(out)
+
+
+def _format_content(content: str) -> str:
+    """Doc text -> HTML. If it already has tags, keep it; else build paragraphs."""
+    content = content or ""
+    if _HTML_TAG.search(content):
+        return content
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", content) if b.strip()]
+    html = []
+    for i, b in enumerate(blocks):
+        lines = [escape(ln.strip()) for ln in b.splitlines() if ln.strip()]
+        if not lines:
+            continue
+        if i == 0 and len(lines) == 1 and len(lines[0]) < 90:
+            html.append(f"<h1>{lines[0]}</h1>")        # first short line = title
+        else:
+            html.append("<p>" + "<br>".join(lines) + "</p>")
+    return "\n".join(html)
 
 
 def _approved_pages(state):
     a7 = state.get("agent7", {})
     if a7.get("approved"):
         return a7["approved"]
-    # fall back to synced/raw if approve step skipped
     a5 = state.get("agent5", {})
     return a5.get("pages") or state.get("agent3", {}).get("pages", [])
 
@@ -61,8 +93,9 @@ def build(state):
         return fail("No approved pages to build.")
 
     design = _design(state)
-    css_block, js_block = _css_block(design), _js_block(design)
     template_html = design.get("template_html", "")
+    css_block = _css_block(design)
+    js_block = _js_block(design, template_html)
 
     built = []
     for p in pages:
@@ -73,7 +106,7 @@ def build(state):
             meta_description=escape(p.get("meta_description", "")),
             css_block=css_block,
             template_html=template_html,
-            content=p.get("content", ""),
+            content=_format_content(p.get("content", "")),
             js_block=js_block,
         )
         (Config.OUTPUT_DIR / filename).write_text(html, encoding="utf-8")

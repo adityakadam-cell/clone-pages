@@ -42,6 +42,7 @@ def run(html: str, base_url: str = ""):
         "inline_css": inline_css,
         "js_links": js_links,
         "inline_js_count": len(inline_js),
+        "inline_js": inline_js,
         "template_html": template_html,
     }
     msg = f"Captured {len(css_links)} CSS file(s), {len(js_links)} JS file(s)."
