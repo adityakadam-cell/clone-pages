@@ -2,42 +2,53 @@
 {% block title %}Agent 7 — Approve{% endblock %}
 {% block body %}
   <h2>Agent 7 — Preview &amp; approve</h2>
-  <p class="hint">Pick up to <b>{{ max_build }}</b> pages to build this round. Run again for the next batch.</p>
+  <p class="hint" id="batchHint">Showing the next <b>{{ max_build }}</b> page(s) to build.</p>
   <div class="actions inline">
-    <button type="button" class="btn small" onclick="selFirst()">Select first {{ max_build }}</button>
+    <button type="button" class="btn small" onclick="selFirst()">Select all shown</button>
     <button type="button" class="btn small" onclick="sel(false)">Clear</button>
     <span id="counter" class="counter">0 / {{ max_build }} selected</span>
   </div>
   <form method="post" action="{{ url_for('post_agent7') }}" id="approveForm">
     <div id="previewList" class="preview-grid">
-      <div class="loader"><div class="spinner"></div><span>Loading preview…</span></div>
+      <div class="loader"><div class="spinner"></div><span>Loading next batch…</span></div>
     </div>
-    <div class="actions">
+    <div class="actions sticky">
       <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
       <button class="btn primary" type="submit">Approve &amp; build &rarr;</button>
     </div>
   </form>
+
+  <!-- "already done" dialog -->
+  <div id="doneModal" class="modal-overlay" style="display:none">
+    <div class="modal">
+      <h3 id="doneTitle">Already created</h3>
+      <p id="doneBody" class="hint"></p>
+      <div id="doneList" class="modal-list"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn primary" onclick="closeDone()">OK, show next batch</button>
+      </div>
+    </div>
+  </div>
 {% endblock %}
 {% block scripts %}
 <script>
 const MAX = {{ max_build }};
-
 function boxes(){ return [...document.querySelectorAll(".appchk")]; }
 function count(){ return boxes().filter(c => c.checked).length; }
 function refresh(){
   const n = count();
   document.getElementById("counter").textContent = `${n} / ${MAX} selected`;
-  // disable unchecked boxes once the cap is reached
   boxes().forEach(c => { if (!c.checked) c.disabled = (n >= MAX); });
 }
 function sel(v){ boxes().forEach(c => { c.checked = v; c.disabled = false; }); refresh(); }
-function selFirst(){
-  boxes().forEach((c,i) => { c.checked = (i < MAX); c.disabled = false; });
-  refresh();
-}
+function selFirst(){ boxes().forEach((c,i)=>{ c.checked = (i < MAX); c.disabled=false; }); refresh(); }
+function closeDone(){ document.getElementById("doneModal").style.display = "none"; }
 
 fetch("{{ url_for('api_agent7_preview') }}").then(r=>r.json()).then(r=>{
-  const items = r.data.items || [];
+  const d = r.data, items = d.items || [];
+  document.getElementById("batchHint").innerHTML =
+    `Showing <b>${items.length}</b> of <b>${d.todo_total}</b> page(s) still to build ` +
+    `(of ${d.total} total). Build up to ${MAX} per round.`;
   document.getElementById("previewList").innerHTML = items.map(p => `
     <div class="pcard">
       <label class="pcard-head">
@@ -46,14 +57,21 @@ fetch("{{ url_for('api_agent7_preview') }}").then(r=>r.json()).then(r=>{
       </label>
       <div class="pcard-url">${p.page_url || "(no url)"}</div>
       <div class="pcard-meta"><b>${p.meta_title||""}</b></div>
-      <div class="pcard-meta">${p.meta_description||""}</div>
       <div class="pcard-body">${(p.content_preview||"").replace(/</g,"&lt;")}…</div>
-    </div>`).join("") || "<p class='hint'>Nothing to preview.</p>";
+    </div>`).join("") || "<p class='hint'>Nothing left to build — every page in this sheet is already done.</p>";
   boxes().forEach(c => c.addEventListener("change", refresh));
   refresh();
+
+  // dialog: some pages were already created before
+  if (d.done_count > 0){
+    document.getElementById("doneBody").textContent =
+      `${d.done_count} page(s) from this sheet were already created in an earlier round and are skipped:`;
+    document.getElementById("doneList").innerHTML =
+      d.done_names.map(n => `<div class="modal-row">✓ ${n}</div>`).join("");
+    document.getElementById("doneModal").style.display = "flex";
+  }
 });
 
-// safety: block submitting more than MAX
 document.getElementById("approveForm").addEventListener("submit", e => {
   if (count() === 0){ e.preventDefault(); alert("Select at least one page."); }
   else if (count() > MAX){ e.preventDefault(); alert("You can build at most " + MAX + " pages per round."); }

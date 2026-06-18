@@ -124,3 +124,20 @@ a.dl:hover{text-decoration:underline}
 .vlabel{font-weight:600;min-width:170px}
 .vnote{color:var(--muted)}
 @media (max-width:560px){ .vlabel{min-width:0} .vchecks li{flex-wrap:wrap} }
+
+/* ---- Sticky action bar (stays fixed at the bottom on long pages) ---- */
+.actions.sticky{position:sticky;bottom:0;background:var(--panel);
+  border-top:1px solid var(--line);
+  margin:14px -24px -24px;padding:14px 24px;
+  border-radius:0 0 var(--radius) var(--radius);z-index:5}
+
+/* ---- "already done" dialog ---- */
+.modal-overlay{position:fixed;inset:0;background:rgba(2,6,23,.7);
+  display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  padding:22px;max-width:520px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.modal h3{margin:0 0 8px;font-size:18px}
+.modal-list{max-height:240px;overflow:auto;margin:12px 0;display:grid;gap:4px}
+.modal-row{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+  padding:7px 10px;font-size:13px;color:var(--ok)}
+.modal-actions{display:flex;justify-content:flex-end;margin-top:6px}

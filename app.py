@@ -23,6 +23,7 @@ except ImportError:
     pass
 
 from config import Config, init_dirs
+from core import registry
 from agents import (
     agent1_url_input as a1,
     agent2_design_capture as a2,
@@ -236,6 +237,7 @@ def post_agent7():
         flash(build["error"], "error")
         return redirect(url_for("agent", n=7))
     sdata()["built"] = build["data"]["built"]
+    registry.mark_built(build["data"]["built"])   # remember for next sessions
     flash(build["message"], "ok")
     return redirect(url_for("agent", n=8))
 

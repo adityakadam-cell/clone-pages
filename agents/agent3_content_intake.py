@@ -69,7 +69,7 @@ def _doc_content(rec, api_key: str = ""):
 
     target = link or (value if is_url(value) else "")
     if target:
-        text, err = safe_fetch(target, api_key=api_key)
+        text, err = safe_fetch(target, api_key=api_key, prefer_title=Config.DOC_TAB_TITLE)
         if text:
             return text, ""
         return value, f"could not fetch doc link ({err})"

@@ -1,12 +1,14 @@
 """
 Fetch real page content from a link found in a sheet's "Doc" cell.
 
-Google Docs are read via the Docs API v1 (includeTabsContent), which:
-  * handles the newer "tabs" feature, and
-  * lets us fetch ONLY the tab named in the link (…/edit?tab=t.xxxxx) instead
-    of gluing every tab together.
-Inline images become an [[IMAGE]] marker so the builder can drop in a
-placeholder. Falls back to the plain ?format=txt export for simple docs.
+Google Docs are read via the Docs API v1 (includeTabsContent). When a doc has
+multiple tabs we return ONLY one tab, chosen in this order:
+  1. the tab whose TITLE matches prefer_title (e.g. "Final") — most reliable,
+     because chip links in sheets can point at the wrong tab id;
+  2. the tab id named in the link (…/edit?tab=t.xxxxx);
+If a specific tab was requested but can't be isolated, we raise a clear error
+instead of dumping every tab (which produced wrong, mixed content).
+Inline images become an [[IMAGE]] marker. Non-Google URLs are stripped to text.
 """
 from __future__ import annotations
 
@@ -23,6 +25,10 @@ IMAGE_MARK = "[[IMAGE]]"
 
 _GDOC_RE = re.compile(r"docs\.google\.com/document/d/([a-zA-Z0-9-_]+)")
 _TAB_RE = re.compile(r"[?#&]tab=(t\.[a-zA-Z0-9]+)")
+
+
+class TabNotFound(Exception):
+    pass
 
 
 def is_url(value: str) -> bool:
@@ -49,7 +55,7 @@ def gdoc_export_url(url: str) -> str | None:
 
 
 # ---------------------------------------------------------------------- #
-# Docs API v1 (tabs + single-tab selection + image markers)
+# Docs API v1 (tabs)
 # ---------------------------------------------------------------------- #
 def _walk_structural(content) -> str:
     out = []
@@ -60,7 +66,7 @@ def _walk_structural(content) -> str:
                 tr = e.get("textRun")
                 if tr and tr.get("content"):
                     out.append(tr["content"])
-                if "inlineObjectElement" in e:      # an inline image
+                if "inlineObjectElement" in e:
                     out.append(f"\n{IMAGE_MARK}\n")
             out.append("\n")
         table = el.get("table")
@@ -74,15 +80,42 @@ def _walk_structural(content) -> str:
     return "".join(out)
 
 
-def _find_tab(tabs, tab_id):
-    """Recursively locate a tab by its tabId."""
+def _tab_id_match(api_id: str, want: str) -> bool:
+    if not api_id or not want:
+        return False
+    a, w = api_id.lower().strip(), want.lower().strip()
+    a2 = a[2:] if a.startswith("t.") else a
+    w2 = w[2:] if w.startswith("t.") else w
+    return a == w or a2 == w2 or a.endswith(w) or w.endswith(a)
+
+
+def _find_tab_by_title(tabs, title):
+    want = (title or "").lower().strip()
+    if not want:
+        return None
     for tab in tabs or []:
-        if (tab.get("tabProperties", {}) or {}).get("tabId") == tab_id:
+        if ((tab.get("tabProperties", {}) or {}).get("title", "")
+                .lower().strip() == want):
             return tab
-        found = _find_tab(tab.get("childTabs"), tab_id)
+        found = _find_tab_by_title(tab.get("childTabs"), title)
         if found:
             return found
     return None
+
+
+def _find_tab_by_id(tabs, tab_id):
+    for tab in tabs or []:
+        if _tab_id_match((tab.get("tabProperties", {}) or {}).get("tabId", ""), tab_id):
+            return tab
+        found = _find_tab_by_id(tab.get("childTabs"), tab_id)
+        if found:
+            return found
+    return None
+
+
+def _tab_body_text(tab) -> str:
+    body = (tab.get("documentTab", {}) or {}).get("body", {}) or {}
+    return _tidy(_walk_structural(body.get("content")))
 
 
 def _walk_tabs(tabs) -> str:
@@ -94,9 +127,9 @@ def _walk_tabs(tabs) -> str:
     return "".join(out)
 
 
-def fetch_gdoc_via_api(doc_id: str, api_key: str, tab_id: str | None = None) -> str:
-    """Read a public Google Doc via the Docs API. If tab_id is given, return ONLY
-    that tab's body (no sibling/child tabs). Raises on error."""
+def fetch_gdoc_via_api(doc_id: str, api_key: str,
+                       tab_id: str | None = None,
+                       prefer_title: str | None = None) -> str:
     r = requests.get(
         f"{DOCS_API}{doc_id}",
         params={"key": api_key, "includeTabsContent": "true"},
@@ -106,21 +139,23 @@ def fetch_gdoc_via_api(doc_id: str, api_key: str, tab_id: str | None = None) -> 
     data = r.json()
     tabs = data.get("tabs")
 
-    text = ""
     if tabs:
-        tab = _find_tab(tabs, tab_id) if tab_id else None
-        if tab:                                    # only the requested tab
-            body = (tab.get("documentTab", {}) or {}).get("body", {}) or {}
-            text = _walk_structural(body.get("content"))
-        else:                                      # no tab specified/found -> all
-            text = _walk_tabs(tabs)
-    if not text.strip():
-        text = _walk_structural((data.get("body", {}) or {}).get("content"))
-    return _tidy(text)
+        tab = (_find_tab_by_title(tabs, prefer_title) if prefer_title else None)
+        if tab is None and tab_id:
+            tab = _find_tab_by_id(tabs, tab_id)
+        if tab is not None:
+            return _tab_body_text(tab)
+        # something specific was requested but not found
+        if prefer_title or tab_id:
+            raise TabNotFound(prefer_title or tab_id)
+        return _tidy(_walk_tabs(tabs))
+
+    # doc without tabs
+    return _tidy(_walk_structural((data.get("body", {}) or {}).get("content")))
 
 
 def _tidy(text: str) -> str:
-    text = (text or "").replace("﻿", "")      # strip BOM
+    text = (text or "").replace("﻿", "")
     lines = [ln.rstrip() for ln in text.splitlines()]
     out, blank = [], 0
     for ln in lines:
@@ -152,24 +187,38 @@ def _html_to_text(html: str) -> str:
     return "\n".join(ln for ln in lines if ln)
 
 
-def fetch_doc_text(url: str, api_key: str = "") -> str:
-    """Return plain-text content for a Doc link (only the linked tab when present)."""
+def fetch_doc_text(url: str, api_key: str = "", prefer_title: str = "") -> str:
+    """Return plain-text content for a Doc link. Prefers the tab titled
+    prefer_title, else the tab named in the link."""
     did = gdoc_id(url)
     tab_id = gdoc_tab_id(url)
+    wants_tab = bool(prefer_title or tab_id)
 
     if did and api_key:
         try:
-            text = fetch_gdoc_via_api(did, api_key, tab_id=tab_id)
+            text = fetch_gdoc_via_api(did, api_key, tab_id=tab_id,
+                                      prefer_title=prefer_title or None)
             if text:
                 return text
-        except Exception:
-            pass  # fall through to the export
+            if wants_tab:
+                raise RuntimeError("the linked Doc tab is empty")
+        except TabNotFound:
+            raise RuntimeError(
+                f"couldn't find a '{prefer_title}' tab (or the linked tab) in the "
+                "Doc — check the tab name, or re-copy the tab link into the Doc cell")
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            if wants_tab:
+                raise RuntimeError(
+                    f"couldn't read the Doc via the Docs API ({exc}). Check the Doc "
+                    "is shared 'anyone with the link can view' and the Docs API is "
+                    "enabled + allowed on the key")
 
     export = gdoc_export_url(url)
     target = export or url
     r = requests.get(target, timeout=TIMEOUT, headers=HEADERS, allow_redirects=True)
     r.raise_for_status()
-
     if export:
         text = (r.text or "").strip()
         if not text:
@@ -178,14 +227,13 @@ def fetch_doc_text(url: str, api_key: str = "") -> str:
         if _looks_like_login(text):
             raise RuntimeError("doc is private — share it 'anyone with the link can view'")
         return _tidy(text)
-
     return _html_to_text(r.text)
 
 
-def safe_fetch(url: str, api_key: str = "") -> tuple[str, str]:
+def safe_fetch(url: str, api_key: str = "", prefer_title: str = "") -> tuple[str, str]:
     if not is_url(url):
         return "", "not a url"
     try:
-        return fetch_doc_text(url, api_key=api_key), ""
+        return fetch_doc_text(url, api_key=api_key, prefer_title=prefer_title), ""
     except Exception as exc:        # pragma: no cover - network dependent
         return "", str(exc)
