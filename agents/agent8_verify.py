@@ -102,8 +102,9 @@ def run(state):
                 else "page text differs from the source document")
         else:
             add("Source document content", False,
-                "the linked Google Doc had no readable content "
-                "(empty or not shared 'anyone with the link can view')")
+                (src.get("_note")
+                 or "the linked Google Doc had no readable content "
+                    "(empty, wrong tab, or not shared 'anyone with the link can view')"))
 
         page_ok = all(ch["ok"] for ch in checks)
         reports.append({"product": product or fn, "filename": fn,

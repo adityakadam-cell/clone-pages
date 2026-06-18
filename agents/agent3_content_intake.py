@@ -108,12 +108,15 @@ def run_sheet(sheet_url, api_key: str = ""):
             "meta_title": r.get("meta_title", ""),
             "meta_description": r.get("meta_description", ""),
             "source": "google-sheet",
+            "_note": note,
         })
 
     msg = f"Read {len(pages)} rows; fetched content for {fetched} page(s)."
     if not used_api:
         msg += (" (No Google API key set - Doc links can't be read, so "
                 "content was taken from the cell text only.)")
+    elif notes:
+        msg += f"  First issue -> {notes[0]}"
     data = {"mode": "sheet", "pages": pages, "count": len(pages),
             "fetched": fetched, "used_api": used_api, "notes": notes[:20]}
     return ok(data, msg)
