@@ -12,17 +12,20 @@ A 7-agent wizard (separate page per agent, like the optimizer flow):
 
 Run order: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 6
 Local dev:  python app.py   ->  http://localhost:5000
-Production: gunicorn wsgi:app   (see README.md)
+Production: gunicorn app:app   (see README.md)
+
+Session state is stored server-side on disk (Flask-Session, filesystem) so it
+survives worker restarts and works across workers.
 """
 import logging
 import os
-import secrets
-import threading
+from pathlib import Path
 
 from flask import (
     Flask, render_template, request, redirect,
     url_for, session, jsonify, flash, send_from_directory,
 )
+from flask_session import Session
 
 try:
     from dotenv import load_dotenv
@@ -47,35 +50,34 @@ logging.basicConfig(
 )
 log = logging.getLogger("api-agent")
 
+BASE_DIR = Path(__file__).resolve().parent
+
 app = Flask(__name__)
 app.config.from_object(Config)
 app.secret_key = Config.SECRET_KEY
-init_dirs()
 
 # ----------------------------------------------------------------------
-# Server-side per-session store (optimizer-wizard pattern).
-# Pasted HTML + content blobs blow past the 4 KB Flask cookie limit, so we
-# keep everything server-side and only put a small session id in the cookie.
-# NOTE: process-local dict -> run with a single Gunicorn worker (see render.yaml).
+# Durable server-side session (filesystem). Wizard state (pasted HTML,
+# 202 page records, etc.) is far too big for a 4 KB cookie and must not
+# vanish when a worker restarts -- so we persist it to disk, keyed by a
+# small session id in the cookie.
 # ----------------------------------------------------------------------
-_store: dict = {}
-_store_lock = threading.Lock()
+app.config["SESSION_TYPE"] = "filesystem"
+app.config["SESSION_FILE_DIR"] = str(BASE_DIR / ".flask_session")
+app.config["SESSION_PERMANENT"] = False
+app.config["SESSION_USE_SIGNER"] = True
+Session(app)
+
+init_dirs()
 
 
 def sdata() -> dict:
-    sid = session.get("sid")
-    if not sid:
-        sid = secrets.token_hex(16)
-        session["sid"] = sid
-    with _store_lock:
-        return _store.setdefault(sid, {})
+    """The current browser session (dict-like, persisted to disk)."""
+    return session
 
 
 def clear_sdata():
-    sid = session.pop("sid", None)
-    if sid:
-        with _store_lock:
-            _store.pop(sid, None)
+    session.clear()
 
 
 # Run order + page metadata for the progress nav.
@@ -98,7 +100,7 @@ def _prev(agent: int) -> int:
 
 @app.context_processor
 def inject_nav():
-    done = {k for k in sdata().keys() if k.startswith("agent")}
+    done = {k for k in sdata().keys() if str(k).startswith("agent")}
     return {"FLOW": FLOW, "LABELS": LABELS, "done_keys": done}
 
 

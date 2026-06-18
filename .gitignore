@@ -22,3 +22,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.log
+
+# Server-side session files
+.flask_session/
