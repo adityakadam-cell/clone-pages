@@ -101,10 +101,15 @@ if not errorlevel 1 goto :pushed
 
 REM --- normal push failed: it's usually because the remote has a commit
 REM     (like an auto-created README) that this folder doesn't have.
-REM     Retry once with a safe force that won't clobber a teammate's push.
+REM     Fetch the remote first, then retry with a safe force; if the repo was
+REM     never synced (no remote ref yet) fall back to a plain force.
 echo.
-echo Normal push was rejected. Retrying with a safe force...
+echo Normal push was rejected. Syncing with the remote and retrying...
+git fetch origin >nul 2>&1
 git push -u origin main --force-with-lease
+if not errorlevel 1 goto :pushed
+echo Safe force could not verify the remote. Doing a plain force...
+git push -u origin main --force
 if not errorlevel 1 goto :pushed
 
 echo.
