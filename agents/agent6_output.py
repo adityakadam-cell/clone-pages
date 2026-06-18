@@ -2,9 +2,10 @@
 Agent 6 — Output & download.
 
 Build each approved page into a standalone HTML file:
-  * Design (CSS + JS) is the one captured from the provided HTML in Agent 2.
-  * Content is the text fetched from that row's Doc (Agent 3), formatted
-    into readable paragraphs.
+  * Design (CSS + JS) captured from the provided HTML in Agent 2.
+  * Content fetched from that row's Doc (Agent 3), formatted into paragraphs.
+  * Inline-image markers ([[IMAGE]]) become a placeholder image, and a small
+    script swaps ANY broken image on the page to the same placeholder.
 Then offer single + bulk (zip) downloads.
 """
 import re
@@ -13,6 +14,31 @@ from html import escape
 
 from config import Config
 from core.utils import ok, fail, slugify
+from core.doc_fetcher import IMAGE_MARK
+
+# Self-contained SVG placeholder (no external dependency).
+PLACEHOLDER_SRC = (
+    "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmci"
+    "IHdpZHRoPSI2NDAiIGhlaWdodD0iMzYwIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAl"
+    "IiBmaWxsPSIjZTJlOGYwIi8+PHJlY3QgeD0iOCIgeT0iOCIgd2lkdGg9IjYyNCIgaGVpZ2h0PSIz"
+    "NDQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzk0YTNiOCIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2Ut"
+    "ZGFzaGFycmF5PSIxMCA4Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlh"
+    "bCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmaWxsPSIjNjQ3NDhiIiB0ZXh0LWFuY2hvcj0i"
+    "bWlkZGxlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIj5JbWFnZSBwbGFjZWhvbGRlcjwvdGV4"
+    "dD48L3N2Zz4="
+)
+PLACEHOLDER_IMG = (f'<img class="api-img-placeholder" alt="image placeholder" '
+                   f'src="{PLACEHOLDER_SRC}">')
+
+# Replaces any image that fails to load (design or content) with the placeholder.
+IMG_FALLBACK_SCRIPT = (
+    "<script>(function(){var P='" + PLACEHOLDER_SRC + "';"
+    "function fix(i){if(i.src!==P){i.src=P;i.classList.add('api-img-placeholder');}}"
+    "document.addEventListener('DOMContentLoaded',function(){"
+    "document.querySelectorAll('img').forEach(function(i){"
+    "i.addEventListener('error',function(){fix(i);});"
+    "if(i.complete&&i.naturalWidth===0){fix(i);}});});})();</script>"
+)
 
 PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -29,6 +55,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 {content}
 </main>
 {js_block}
+{img_fallback}
 </body>
 </html>
 """
@@ -41,7 +68,6 @@ def _design(state):
 
 
 def _css_block(design):
-    """All stylesheets + inline <style> from the reference page."""
     out = [f'  <link rel="stylesheet" href="{escape(h)}">'
            for h in design.get("css_links", [])]
     for css in design.get("inline_css", []):
@@ -51,8 +77,6 @@ def _css_block(design):
 
 
 def _js_block(design, template_html=""):
-    """External scripts + inline scripts (de-duped against the body template,
-    so head-level inline JS is preserved without duplicating body scripts)."""
     out = [f'  <script src="{escape(s)}"></script>'
            for s in design.get("js_links", [])]
     for js in design.get("inline_js", []):
@@ -62,20 +86,27 @@ def _js_block(design, template_html=""):
 
 
 def _format_content(content: str) -> str:
-    """Doc text -> HTML. If it already has tags, keep it; else build paragraphs."""
+    """Doc text -> HTML. [[IMAGE]] markers become placeholders; plain text
+    becomes paragraphs; existing HTML is kept as-is."""
     content = content or ""
     if _HTML_TAG.search(content):
         return content
-    blocks = [b.strip() for b in re.split(r"\n\s*\n", content) if b.strip()]
-    html = []
-    for i, b in enumerate(blocks):
-        lines = [escape(ln.strip()) for ln in b.splitlines() if ln.strip()]
-        if not lines:
-            continue
-        if i == 0 and len(lines) == 1 and len(lines[0]) < 90:
-            html.append(f"<h1>{lines[0]}</h1>")        # first short line = title
-        else:
-            html.append("<p>" + "<br>".join(lines) + "</p>")
+
+    html, first = [], True
+    # split on the image marker so placeholders land where images were
+    for part in content.split(IMAGE_MARK):
+        for b in re.split(r"\n\s*\n", part):
+            lines = [escape(ln.strip()) for ln in b.splitlines() if ln.strip()]
+            if not lines:
+                continue
+            if first and len(lines) == 1 and len(lines[0]) < 90:
+                html.append(f"<h1>{lines[0]}</h1>")
+            else:
+                html.append("<p>" + "<br>".join(lines) + "</p>")
+            first = False
+        html.append(PLACEHOLDER_IMG)
+    if html and html[-1] == PLACEHOLDER_IMG:    # no trailing marker -> drop extra
+        html.pop()
     return "\n".join(html)
 
 
@@ -108,6 +139,7 @@ def build(state):
             template_html=template_html,
             content=_format_content(p.get("content", "")),
             js_block=js_block,
+            img_fallback=IMG_FALLBACK_SCRIPT,
         )
         (Config.OUTPUT_DIR / filename).write_text(html, encoding="utf-8")
         built.append({"product": p.get("product", ""), "filename": filename})

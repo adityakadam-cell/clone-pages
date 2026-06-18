@@ -1,12 +1,12 @@
 """
 Fetch real page content from a link found in a sheet's "Doc" cell.
 
-Google Docs are read in this order:
-  1. Docs API v1 with includeTabsContent  -> walks tabs + body, handles the
-     newer "tabs" feature that the plain text export silently drops.
-     (Needs the Docs API enabled + allowed on the key, and a public doc.)
-  2. Fallback: …/export?format=txt          -> works for simple, public docs.
-Any non-Google URL is fetched and stripped to readable text.
+Google Docs are read via the Docs API v1 (includeTabsContent), which:
+  * handles the newer "tabs" feature, and
+  * lets us fetch ONLY the tab named in the link (…/edit?tab=t.xxxxx) instead
+    of gluing every tab together.
+Inline images become an [[IMAGE]] marker so the builder can drop in a
+placeholder. Falls back to the plain ?format=txt export for simple docs.
 """
 from __future__ import annotations
 
@@ -19,8 +19,10 @@ from bs4 import BeautifulSoup
 TIMEOUT = 30
 HEADERS = {"User-Agent": "Mozilla/5.0 (API-Agent content fetcher)"}
 DOCS_API = "https://docs.googleapis.com/v1/documents/"
+IMAGE_MARK = "[[IMAGE]]"
 
 _GDOC_RE = re.compile(r"docs\.google\.com/document/d/([a-zA-Z0-9-_]+)")
+_TAB_RE = re.compile(r"[?#&]tab=(t\.[a-zA-Z0-9]+)")
 
 
 def is_url(value: str) -> bool:
@@ -36,16 +38,20 @@ def gdoc_id(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+def gdoc_tab_id(url: str) -> str | None:
+    m = _TAB_RE.search(url or "")
+    return m.group(1) if m else None
+
+
 def gdoc_export_url(url: str) -> str | None:
     did = gdoc_id(url)
     return f"https://docs.google.com/document/d/{did}/export?format=txt" if did else None
 
 
 # ---------------------------------------------------------------------- #
-# Docs API v1 (handles tabs)
+# Docs API v1 (tabs + single-tab selection + image markers)
 # ---------------------------------------------------------------------- #
 def _walk_structural(content) -> str:
-    """Pull text out of a Docs API body 'content' list."""
     out = []
     for el in content or []:
         para = el.get("paragraph")
@@ -54,6 +60,9 @@ def _walk_structural(content) -> str:
                 tr = e.get("textRun")
                 if tr and tr.get("content"):
                     out.append(tr["content"])
+                if "inlineObjectElement" in e:      # an inline image
+                    out.append(f"\n{IMAGE_MARK}\n")
+            out.append("\n")
         table = el.get("table")
         if table:
             for row in table.get("tableRows", []):
@@ -65,6 +74,17 @@ def _walk_structural(content) -> str:
     return "".join(out)
 
 
+def _find_tab(tabs, tab_id):
+    """Recursively locate a tab by its tabId."""
+    for tab in tabs or []:
+        if (tab.get("tabProperties", {}) or {}).get("tabId") == tab_id:
+            return tab
+        found = _find_tab(tab.get("childTabs"), tab_id)
+        if found:
+            return found
+    return None
+
+
 def _walk_tabs(tabs) -> str:
     out = []
     for tab in tabs or []:
@@ -74,8 +94,9 @@ def _walk_tabs(tabs) -> str:
     return "".join(out)
 
 
-def fetch_gdoc_via_api(doc_id: str, api_key: str) -> str:
-    """Read a public Google Doc (incl. tabs) via the Docs API. Raises on error."""
+def fetch_gdoc_via_api(doc_id: str, api_key: str, tab_id: str | None = None) -> str:
+    """Read a public Google Doc via the Docs API. If tab_id is given, return ONLY
+    that tab's body (no sibling/child tabs). Raises on error."""
     r = requests.get(
         f"{DOCS_API}{doc_id}",
         params={"key": api_key, "includeTabsContent": "true"},
@@ -83,14 +104,24 @@ def fetch_gdoc_via_api(doc_id: str, api_key: str) -> str:
     )
     r.raise_for_status()
     data = r.json()
-    text = _walk_tabs(data.get("tabs"))
+    tabs = data.get("tabs")
+
+    text = ""
+    if tabs:
+        tab = _find_tab(tabs, tab_id) if tab_id else None
+        if tab:                                    # only the requested tab
+            body = (tab.get("documentTab", {}) or {}).get("body", {}) or {}
+            text = _walk_structural(body.get("content"))
+        else:                                      # no tab specified/found -> all
+            text = _walk_tabs(tabs)
     if not text.strip():
         text = _walk_structural((data.get("body", {}) or {}).get("content"))
     return _tidy(text)
 
 
 def _tidy(text: str) -> str:
-    lines = [ln.rstrip() for ln in (text or "").splitlines()]
+    text = (text or "").replace("﻿", "")      # strip BOM
+    lines = [ln.rstrip() for ln in text.splitlines()]
     out, blank = [], 0
     for ln in lines:
         if ln.strip():
@@ -122,19 +153,18 @@ def _html_to_text(html: str) -> str:
 
 
 def fetch_doc_text(url: str, api_key: str = "") -> str:
-    """Return plain-text content for a Doc link. Raises on failure / private doc."""
+    """Return plain-text content for a Doc link (only the linked tab when present)."""
     did = gdoc_id(url)
+    tab_id = gdoc_tab_id(url)
 
-    # 1. Docs API (handles tabs) when we have a key
     if did and api_key:
         try:
-            text = fetch_gdoc_via_api(did, api_key)
+            text = fetch_gdoc_via_api(did, api_key, tab_id=tab_id)
             if text:
                 return text
         except Exception:
             pass  # fall through to the export
 
-    # 2. Plain txt export (simple public docs)
     export = gdoc_export_url(url)
     target = export or url
     r = requests.get(target, timeout=TIMEOUT, headers=HEADERS, allow_redirects=True)
@@ -153,7 +183,6 @@ def fetch_doc_text(url: str, api_key: str = "") -> str:
 
 
 def safe_fetch(url: str, api_key: str = "") -> tuple[str, str]:
-    """Fetch without raising. Returns (text, error)."""
     if not is_url(url):
         return "", "not a url"
     try:
