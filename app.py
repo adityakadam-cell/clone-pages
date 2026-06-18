@@ -14,18 +14,20 @@ Run order: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 6
 Local dev:  python app.py   ->  http://localhost:5000
 Production: gunicorn app:app   (see README.md)
 
-Session state is stored server-side on disk (Flask-Session, filesystem) so it
-survives worker restarts and works across workers.
+Session state is persisted to a small JSON file per browser (keyed by a session
+id in the cookie). This survives worker restarts and works across workers, with
+no external dependency.
 """
+import json
 import logging
 import os
+import secrets
 from pathlib import Path
 
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, session, jsonify, flash, send_from_directory,
+    url_for, session, jsonify, flash, send_from_directory, g,
 )
-from flask_session import Session
 
 try:
     from dotenv import load_dotenv
@@ -51,33 +53,67 @@ logging.basicConfig(
 log = logging.getLogger("api-agent")
 
 BASE_DIR = Path(__file__).resolve().parent
+SESS_DIR = BASE_DIR / ".sessions"
+SESS_DIR.mkdir(exist_ok=True)
 
 app = Flask(__name__)
 app.config.from_object(Config)
 app.secret_key = Config.SECRET_KEY
 
-# ----------------------------------------------------------------------
-# Durable server-side session (filesystem). Wizard state (pasted HTML,
-# 202 page records, etc.) is far too big for a 4 KB cookie and must not
-# vanish when a worker restarts -- so we persist it to disk, keyed by a
-# small session id in the cookie.
-# ----------------------------------------------------------------------
-app.config["SESSION_TYPE"] = "filesystem"
-app.config["SESSION_FILE_DIR"] = str(BASE_DIR / ".flask_session")
-app.config["SESSION_PERMANENT"] = False
-app.config["SESSION_USE_SIGNER"] = True
-Session(app)
-
 init_dirs()
 
 
+# ----------------------------------------------------------------------
+# Durable per-browser store.
+# The cookie holds only a small session id; the wizard's data (pasted HTML,
+# 202 page records, etc.) is kept in a JSON file on disk. Loaded once per
+# request into flask.g, and written back after the response.
+# ----------------------------------------------------------------------
+def _sid() -> str:
+    sid = session.get("sid")
+    if not sid:
+        sid = secrets.token_hex(16)
+        session["sid"] = sid
+    return sid
+
+
+def _path(sid: str) -> Path:
+    return SESS_DIR / f"{sid}.json"
+
+
 def sdata() -> dict:
-    """The current browser session (dict-like, persisted to disk)."""
-    return session
+    if not hasattr(g, "store"):
+        sid = _sid()
+        p = _path(sid)
+        try:
+            g.store = json.loads(p.read_text("utf-8")) if p.exists() else {}
+        except Exception:
+            g.store = {}
+    return g.store
 
 
 def clear_sdata():
-    session.clear()
+    sid = session.pop("sid", None)
+    if sid:
+        p = _path(sid)
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
+    if hasattr(g, "store"):
+        delattr(g, "store")
+
+
+@app.after_request
+def _persist(resp):
+    try:
+        sid = session.get("sid")
+        if sid and hasattr(g, "store"):
+            _path(sid).write_text(json.dumps(g.store), "utf-8")
+    except Exception as exc:  # pragma: no cover
+        log.warning("session persist failed: %s", exc)
+    return resp
 
 
 # Run order + page metadata for the progress nav.

@@ -24,4 +24,4 @@ Thumbs.db
 *.log
 
 # Server-side session files
-.flask_session/
+.sessions/
