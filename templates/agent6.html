@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Agent 6 — Download{% endblock %}
+{% block body %}
+  <h2>Agent 6 — Download</h2>
+  {% if built %}
+  <div class="actions inline">
+    <button type="button" class="btn small" onclick="chk(true)">Select all</button>
+    <button type="button" class="btn small" onclick="chk(false)">Clear</button>
+    <button type="button" class="btn primary small" onclick="zipit()">Download selected as ZIP</button>
+  </div>
+  <div class="download-list">
+    {% for p in built %}
+      <div class="card">
+        <div class="row">
+          <label><input type="checkbox" class="dlchk" value="{{ p.filename }}" checked></label>
+          <h3>{{ p.product or p.filename }}</h3>
+        </div>
+        <a class="dl" href="{{ url_for('download_one', filename=p.filename) }}">&#8595; {{ p.filename }}</a>
+      </div>
+    {% endfor %}
+  </div>
+  <div class="actions">
+    <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
+    <a class="btn ghost" href="{{ url_for('restart') }}">Start over</a>
+  </div>
+  {% else %}
+    <p class="hint">No pages built yet. Go back through the flow first.</p>
+    <a class="btn primary" href="{{ url_for('agent', n=1) }}">Start &rarr;</a>
+  {% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+function chk(v){ document.querySelectorAll(".dlchk").forEach(c => c.checked = v); }
+function zipit(){
+  const files = [...document.querySelectorAll(".dlchk")].filter(c=>c.checked).map(c=>c.value);
+  if(!files.length){ alert("Select at least one page."); return; }
+  fetch("{{ url_for('api_agent6_zip') }}", {method:"POST",headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({filenames: files})})
+    .then(r=>r.json()).then(r=>{ if(r.ok) window.location = "/download/" + r.data.zip; else alert(r.error); });
+}
+</script>
+{% endblock %}

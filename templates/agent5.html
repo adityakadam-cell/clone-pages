@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Agent 5 — Sync{% endblock %}
+{% block body %}
+  <h2>Agent 5 — Recheck &amp; sync</h2>
+  <p class="hint">Auto-builds any missing field so every page is complete and on-design.</p>
+  <div id="loader" class="loader"><div class="spinner"></div><span>Syncing pages…</span></div>
+  <div id="syncResult" class="board"></div>
+  <div class="actions" id="nav5" style="display:none">
+    <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
+    <a class="btn primary" href="{{ url_for('agent', n=nxt) }}">Preview &amp; approve &rarr;</a>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+fetch("{{ url_for('api_agent5') }}", {method:"POST"})
+ .then(r => r.json()).then(r => {
+   document.getElementById("loader").style.display = "none";
+   document.getElementById("syncResult").innerHTML =
+     `<div class="req ok"><span class="tag">Synced</span> ${r.message}</div>`;
+   document.getElementById("nav5").style.display = "flex";
+ });
+</script>
+{% endblock %}

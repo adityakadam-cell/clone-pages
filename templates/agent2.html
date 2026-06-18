@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Agent 2 — Design{% endblock %}
+{% block body %}
+  <h2>Agent 2 — Design capture</h2>
+  <p class="hint">Paste the page HTML. We extract its CSS &amp; JS so cloned pages match the design.</p>
+  <form method="post" action="{{ url_for('post_agent2') }}">
+    <input type="url" name="base_url" placeholder="Base URL (optional — resolves relative links)">
+    <textarea name="html" rows="9" placeholder="Paste full page HTML here..." required></textarea>
+    <div class="actions">
+      <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
+      <button class="btn primary" type="submit">Capture design &rarr;</button>
+    </div>
+  </form>
+{% endblock %}

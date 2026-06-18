@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}API-Agent{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="{{ url_for('restart') }}">API-Agent</a>
+  <span class="tagline">Clone design &middot; fill content &middot; preview &middot; download</span>
+</header>
+
+<nav class="steps">
+  {% for a in FLOW %}
+    <span class="step
+      {{ 'active' if a == n else '' }}
+      {{ 'done' if ('agent' ~ a) in done_keys else '' }}">
+      <b>{{ a }}</b> {{ LABELS[a] }}
+    </span>
+  {% endfor %}
+</nav>
+
+<main class="wrap">
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in msgs %}
+      <div class="flash {{ cat }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <section class="panel">
+    {% block body %}{% endblock %}
+  </section>
+</main>
+{% block scripts %}{% endblock %}
+</body>
+</html>

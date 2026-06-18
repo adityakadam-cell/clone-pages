@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Agent 1 — URL{% endblock %}
+{% block body %}
+  <h2>Agent 1 — Page URL</h2>
+  <p class="hint">Insert the live / reference page URL you want to clone.</p>
+  <form method="post" action="{{ url_for('post_agent1') }}">
+    <input type="url" name="url" value="{{ url }}" placeholder="https://www.example.com/product-page.html" required>
+    <div class="actions"><span></span>
+      <button class="btn primary" type="submit">Save URL &rarr;</button>
+    </div>
+  </form>
+{% endblock %}

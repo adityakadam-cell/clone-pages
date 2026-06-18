@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Agent 4 — Analyze{% endblock %}
+{% block body %}
+  <h2>Agent 4 — Analysis</h2>
+  <div id="loader" class="loader"><div class="spinner"></div><span>Analyzing content &amp; design…</span></div>
+  <div id="board" class="board"></div>
+  <div class="actions" id="nav4" style="display:none">
+    <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
+    <a class="btn primary" href="{{ url_for('agent', n=nxt) }}">Continue &rarr;</a>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+fetch("{{ url_for('api_agent4') }}", {method:"POST"})
+ .then(r => r.json()).then(r => {
+   document.getElementById("loader").style.display = "none";
+   const d = r.data, board = document.getElementById("board");
+   let h = "";
+   if (d.complete) {
+     h = `<div class="req ok"><span class="tag">All good</span> ${d.total_pages} page(s), nothing missing.</div>`;
+   } else {
+     (d.board||[]).forEach(b => h += `<div class="req"><span class="tag">Required</span> ${b}</div>`);
+     (d.page_issues||[]).forEach(p =>
+       h += `<div class="req"><span class="tag">${p.product}</span> missing: ${p.missing.join(", ")}</div>`);
+   }
+   board.innerHTML = h;
+   document.getElementById("nav4").style.display = "flex";
+ });
+</script>
+{% endblock %}

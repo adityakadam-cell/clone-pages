@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Agent 3 — Content{% endblock %}
+{% block body %}
+  <h2>Agent 3 — Content intake</h2>
+  <div class="tabs">
+    <button type="button" class="tab active" data-tab="files">Upload files</button>
+    <button type="button" class="tab" data-tab="sheet">Google Sheet</button>
+  </div>
+
+  <form method="post" action="{{ url_for('post_agent3') }}" enctype="multipart/form-data" class="tabpane active" data-pane="files">
+    <input type="hidden" name="mode" value="files">
+    <p class="hint">Allowed: {{ allowed|join(', ') }}. Min 1, max {{ max_files }} files per round.</p>
+    <input type="file" name="files" multiple accept=".docx,.pdf,.csv,.txt">
+    <div class="actions">
+      <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
+      <button class="btn primary" type="submit">Upload &rarr;</button>
+    </div>
+  </form>
+
+  <form method="post" action="{{ url_for('post_agent3') }}" class="tabpane" data-pane="sheet">
+    <input type="hidden" name="mode" value="sheet">
+    <p class="hint">Reads: Product, Doc, Meta Title, Meta Description, Url (link).</p>
+    <input type="url" name="sheet_url" placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=0">
+    <div class="actions">
+      <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
+      <button class="btn primary" type="submit">Read sheet &rarr;</button>
+    </div>
+  </form>
+
+  <script>
+    document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+      document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+      document.querySelectorAll(".tabpane").forEach(p =>
+        p.classList.toggle("active", p.dataset.pane === t.dataset.tab));
+    });
+  </script>
+{% endblock %}

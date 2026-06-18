@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Agent 7 — Approve{% endblock %}
+{% block body %}
+  <h2>Agent 7 — Preview &amp; approve</h2>
+  <div class="actions inline">
+    <button type="button" class="btn small" onclick="sel(true)">Select all</button>
+    <button type="button" class="btn small" onclick="sel(false)">Clear</button>
+  </div>
+  <form method="post" action="{{ url_for('post_agent7') }}">
+    <div id="previewList" class="preview-list"><div class="loader"><div class="spinner"></div><span>Loading preview…</span></div></div>
+    <div class="actions">
+      <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
+      <button class="btn primary" type="submit">Approve &amp; build &rarr;</button>
+    </div>
+  </form>
+{% endblock %}
+{% block scripts %}
+<script>
+function sel(v){ document.querySelectorAll(".appchk").forEach(c => c.checked = v); }
+fetch("{{ url_for('api_agent7_preview') }}").then(r=>r.json()).then(r=>{
+  const items = r.data.items || [];
+  document.getElementById("previewList").innerHTML = items.map(p => `
+    <div class="card">
+      <div class="row">
+        <label><input type="checkbox" class="appchk" name="approved_ids" value="${p.id}" checked> approve</label>
+        <h3>${p.product}</h3>
+      </div>
+      <div class="url">${p.page_url || "(no url)"}</div>
+      <div class="meta"><b>${p.meta_title||""}</b><br>${p.meta_description||""}</div>
+      <div class="meta">${(p.content_preview||"").replace(/</g,"&lt;")}…</div>
+    </div>`).join("") || "<p class='hint'>Nothing to preview.</p>";
+});
+</script>
+{% endblock %}
