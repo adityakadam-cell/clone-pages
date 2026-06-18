@@ -3,10 +3,8 @@ REM ============================================================
 REM  API-Agent  -  one-click push to GitHub
 REM  Double-click this file to upload all changes.
 REM ============================================================
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
-
-set "REPO=https://github.com/adityakadam-cell/clone-pages.git"
 
 echo.
 echo ===========================================
@@ -31,12 +29,56 @@ if not exist ".git" (
   git branch -M main
 )
 
-REM --- point 'origin' at the repo (add if missing, else update) ---
+REM --- show the repo currently configured (if any) ---
+set "CURRENT="
+for /f "delims=" %%u in ('git remote get-url origin 2^>nul') do set "CURRENT=%%u"
+if defined CURRENT (
+  echo Current repository: !CURRENT!
+) else (
+  echo No repository is set yet.
+)
+echo.
+
+REM --- ask which repository to push to ---
+echo Enter the GitHub repository to push to.
+echo   - Full URL  e.g.  https://github.com/your-name/your-repo.git
+echo   - Or short  e.g.  your-name/your-repo
+if defined CURRENT echo   - Or just press Enter to keep the current one.
+echo.
+set "INPUT="
+set /p "INPUT=Repository: "
+
+REM --- decide the final repo URL ---
+set "REPO="
+if "%INPUT%"=="" (
+  if defined CURRENT (
+    set "REPO=!CURRENT!"
+  ) else (
+    echo [ERROR] No repository entered and none is set. Aborting.
+    echo.
+    pause
+    exit /b 1
+  )
+) else (
+  set "REPO=%INPUT%"
+  REM if it doesn't start with http, treat it as owner/repo shorthand
+  echo !REPO! | findstr /b /i "http" >nul
+  if errorlevel 1 set "REPO=https://github.com/!REPO!"
+  REM append .git if missing
+  echo !REPO! | findstr /e /i ".git" >nul
+  if errorlevel 1 set "REPO=!REPO!.git"
+)
+
+echo.
+echo Using repository: !REPO!
+echo.
+
+REM --- point 'origin' at the chosen repo (add if missing, else update) ---
 git remote get-url origin >nul 2>&1
 if errorlevel 1 (
-  git remote add origin "%REPO%"
+  git remote add origin "!REPO!"
 ) else (
-  git remote set-url origin "%REPO%"
+  git remote set-url origin "!REPO!"
 )
 
 REM --- ask for a commit message (Enter = automatic timestamp) ---
@@ -59,7 +101,9 @@ if errorlevel 1 (
   echo.
   echo [ERROR] Push failed. Common causes:
   echo   - You are signed in as the wrong GitHub account.
-  echo   - The repo %REPO% does not exist yet.
+  echo   - The repo !REPO! does not exist yet.
+  echo   - The remote has commits you don't have locally
+  echo       ^(fix once with:  git push -u origin main --force^).
   echo   - You need a Personal Access Token instead of a password.
   echo.
   pause
