@@ -4,6 +4,10 @@ Fetch real page content from a link found in a sheet's "Doc" cell.
 Handles:
   * Google Docs  -> export as plain text (…/export?format=txt)
   * Any other URL -> fetch HTML and strip to readable text
+
+Note: a Google Doc that is NOT shared "anyone with the link can view" will
+redirect the export endpoint to a sign-in page instead of returning text.
+We detect that and raise a clear error so Agent 3 can flag it.
 """
 from __future__ import annotations
 
@@ -37,6 +41,14 @@ def gdoc_export_url(url: str) -> str | None:
     return f"https://docs.google.com/document/d/{did}/export?format=txt" if did else None
 
 
+def _looks_like_login(text: str) -> bool:
+    head = (text or "")[:800].lower()
+    return any(s in head for s in (
+        "<html", "sign in", "accounts.google.com",
+        "request access", "you need permission", "needs permission",
+    ))
+
+
 def _html_to_text(html: str) -> str:
     soup = BeautifulSoup(html, "lxml")
     for tag in soup(["script", "style", "noscript", "header", "footer", "nav"]):
@@ -46,13 +58,20 @@ def _html_to_text(html: str) -> str:
 
 
 def fetch_doc_text(url: str) -> str:
-    """Return plain-text content for a Doc link. Raises on network failure."""
+    """Return plain-text content for a Doc link. Raises on failure / private doc."""
     export = gdoc_export_url(url)
     target = export or url
-    r = requests.get(target, timeout=TIMEOUT, headers=HEADERS)
+    r = requests.get(target, timeout=TIMEOUT, headers=HEADERS, allow_redirects=True)
     r.raise_for_status()
-    if export:                      # Google Doc txt export is already plain text
-        return r.text.strip()
+
+    if export:
+        text = (r.text or "").strip()
+        if not text:
+            raise RuntimeError("empty doc, or not shared publicly")
+        if _looks_like_login(text):
+            raise RuntimeError("doc is private — share it 'anyone with the link can view'")
+        return text
+
     return _html_to_text(r.text)
 
 

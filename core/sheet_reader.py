@@ -3,19 +3,22 @@ Read a Google Sheet and map the columns the flow needs.
 
 Field mapping (per spec):
   Product          -> page name
-  Doc              -> content source (often a HYPERLINK to a Google Doc)
+  Doc              -> content source (usually a Google "smart chip" link to a Doc)
   Meta Title       -> meta_title
   Meta Description -> meta_description
   Url (link)       -> page_url
 
 Two read paths:
-  * read_sheet()      — CSV export. Keyless, but Google's CSV export DROPS
-                        hyperlinks and keeps only display text. A "Doc" cell
-                        that links to a Google Doc comes back as just the
-                        product name — no URL.
-  * read_sheet_api()  — Sheets API v4 with includeGridData. Exposes each cell's
-                        `hyperlink`, so we can recover the Doc link and fetch the
-                        real content. Needs a (free) Google API key.
+  * read_sheet()      — CSV export. Keyless, but Google's CSV export DROPS all
+                        links and keeps only display text.
+  * read_sheet_api()  — Sheets API v4 with includeGridData. Exposes a cell's
+                        links so we can recover the Doc URL. Links can live in
+                        THREE places, so we check all of them:
+                          1. cell.hyperlink              (whole-cell link)
+                          2. =HYPERLINK("...") formula   (formula link)
+                          3. chipRuns[].chip.richLinkProperties.uri  (smart chip)
+                          4. textFormatRuns[].format.link.uri        (rich text)
+                        Needs a (free) Google API key.
 """
 import csv
 import io
@@ -32,7 +35,7 @@ COLUMN_MAP = {
     "web page link": "web_page_link",
 }
 
-# Columns whose hyperlink (not display text) is what we actually want.
+# Columns whose link (not display text) is what we actually want.
 LINK_FIELDS = {"doc", "page_url", "web_page_link"}
 
 
@@ -49,7 +52,7 @@ def _gid(sheet_url: str) -> str:
 
 
 # ---------------------------------------------------------------------- #
-# CSV path (keyless, no hyperlinks)
+# CSV path (keyless, no links)
 # ---------------------------------------------------------------------- #
 def read_sheet(sheet_url: str, limit: int = 500):
     """Return row dicts from the CSV export (display values only)."""
@@ -76,22 +79,43 @@ def read_sheet(sheet_url: str, limit: int = 500):
 
 
 # ---------------------------------------------------------------------- #
-# Sheets API path (needs key, exposes hyperlinks)
+# Sheets API path (needs key, exposes links)
 # ---------------------------------------------------------------------- #
 _HYPERLINK_FORMULA = re.compile(r'HYPERLINK\(\s*"([^"]+)"', re.IGNORECASE)
 
 
-def _cell_value_and_link(cell: dict):
-    """Pull (display_value, hyperlink) from one Sheets API cell object."""
-    value = (cell.get("formattedValue") or "").strip()
+def _link_from_cell(cell: dict) -> str:
+    """Find a link in a cell, checking every place Google may store one."""
+    # 1. whole-cell hyperlink
     link = cell.get("hyperlink")
-    if not link:
-        formula = (cell.get("userEnteredValue", {}) or {}).get("formulaValue")
-        if formula:
-            m = _HYPERLINK_FORMULA.search(formula)
-            if m:
-                link = m.group(1)
-    return value, (link or "")
+    if link:
+        return link
+
+    # 2. =HYPERLINK("...") formula
+    formula = (cell.get("userEnteredValue", {}) or {}).get("formulaValue")
+    if formula:
+        m = _HYPERLINK_FORMULA.search(formula)
+        if m:
+            return m.group(1)
+
+    # 3. smart chip (Insert > Smart chip, or paste a Doc link as a chip)
+    for run in cell.get("chipRuns", []) or []:
+        uri = ((run.get("chip", {}) or {}).get("richLinkProperties", {}) or {}).get("uri")
+        if uri:
+            return uri
+
+    # 4. rich-text run link (link applied to selected text inside the cell)
+    for run in cell.get("textFormatRuns", []) or []:
+        uri = ((run.get("format", {}) or {}).get("link", {}) or {}).get("uri")
+        if uri:
+            return uri
+
+    return ""
+
+
+def _cell_value_and_link(cell: dict):
+    value = (cell.get("formattedValue") or "").strip()
+    return value, _link_from_cell(cell)
 
 
 def parse_grid(grid_rows: list, limit: int = 500) -> list:
@@ -118,15 +142,15 @@ def parse_grid(grid_rows: list, limit: int = 500) -> list:
 
 
 def read_sheet_api(sheet_url: str, api_key: str, limit: int = 500) -> list:
-    """Read the sheet via Sheets API v4 so hyperlinks survive."""
+    """Read the sheet via Sheets API v4 so links survive."""
     sid, gid = _sheet_id(sheet_url), _gid(sheet_url)
     url = f"https://sheets.googleapis.com/v4/spreadsheets/{sid}"
     params = {
         "includeGridData": "true",
         "key": api_key,
         "fields": (
-            "sheets(properties(sheetId,title),"
-            "data(rowData(values(formattedValue,hyperlink,userEnteredValue))))"
+            "sheets(properties(sheetId,title),data(rowData(values("
+            "formattedValue,hyperlink,userEnteredValue,chipRuns,textFormatRuns))))"
         ),
     }
     resp = requests.get(url, params=params, timeout=60)
