@@ -76,3 +76,34 @@ input:focus,textarea:focus{outline:none;border-color:var(--primary2)}
 .card label{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px}
 a.dl{color:var(--primary2);font-size:13px;text-decoration:none}
 a.dl:hover{text-decoration:underline}
+
+/* ---- Agent 4: issue cards ---- */
+.issue-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:14px 0}
+.issue-card{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--warn);
+  border-radius:10px;padding:14px}
+.issue-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.pg-name{font-size:15px;font-weight:700;color:var(--text)}
+.pg-tag{font-size:10px;color:#fff;background:var(--primary);padding:2px 7px;border-radius:999px}
+.pg-url{color:var(--primary2);font-size:12px;word-break:break-all;margin-bottom:8px}
+.miss{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.miss li{font-size:13px}
+.miss-field{display:inline-block;font-weight:600;color:var(--warn);margin-right:6px}
+.miss-why{color:var(--muted)}
+
+/* ---- Agent 7: 4-up preview grid ---- */
+.preview-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+.pcard{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;
+  display:flex;flex-direction:column;gap:6px}
+.pcard-head{display:flex;align-items:flex-start;gap:8px;cursor:pointer}
+.pcard-name{font-size:14px;font-weight:700;line-height:1.2}
+.pcard-url{color:var(--primary2);font-size:11px;word-break:break-all}
+.pcard-meta{font-size:12px;color:var(--muted)}
+.pcard-body{font-size:12px;color:var(--muted);max-height:84px;overflow:hidden}
+.appchk:disabled{opacity:.4}
+.counter{margin-left:auto;color:var(--muted);font-size:13px;align-self:center}
+
+@media (max-width:1000px){
+  .preview-grid{grid-template-columns:repeat(2,1fr)}
+  .issue-grid{grid-template-columns:1fr}
+}
+@media (max-width:560px){ .preview-grid{grid-template-columns:1fr} }

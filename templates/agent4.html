@@ -3,7 +3,9 @@
 {% block body %}
   <h2>Agent 4 — Analysis</h2>
   <div id="loader" class="loader"><div class="spinner"></div><span>Analyzing content &amp; design…</span></div>
-  <div id="board" class="board"></div>
+  <div id="summary" class="hint"></div>
+  <div id="board"></div>
+  <div id="issues" class="issue-grid"></div>
   <div class="actions" id="nav4" style="display:none">
     <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
     <a class="btn primary" href="{{ url_for('agent', n=nxt) }}">Continue &rarr;</a>
@@ -14,16 +16,39 @@
 fetch("{{ url_for('api_agent4') }}", {method:"POST"})
  .then(r => r.json()).then(r => {
    document.getElementById("loader").style.display = "none";
-   const d = r.data, board = document.getElementById("board");
-   let h = "";
+   const d = r.data;
+   const board = document.getElementById("board");
+   const issues = document.getElementById("issues");
+   const summary = document.getElementById("summary");
+
+   // global blockers (Agent 1 / 2 / 3)
+   board.innerHTML = (d.board || [])
+     .map(b => `<div class="req"><span class="tag">Required</span> ${b}</div>`).join("");
+
    if (d.complete) {
-     h = `<div class="req ok"><span class="tag">All good</span> ${d.total_pages} page(s), nothing missing.</div>`;
+     summary.innerHTML = "";
+     board.innerHTML = `<div class="req ok"><span class="tag">All good</span> ${d.total_pages} page(s), nothing missing.</div>`;
    } else {
-     (d.board||[]).forEach(b => h += `<div class="req"><span class="tag">Required</span> ${b}</div>`);
-     (d.page_issues||[]).forEach(p =>
-       h += `<div class="req"><span class="tag">${p.product}</span> missing: ${p.missing.join(", ")}</div>`);
+     summary.textContent =
+       `${d.total_pages} page(s) read · ${d.pages_with_issues} need attention. ` +
+       `Each card is a page (its Product name) and why a field is missing in the sheet.`;
    }
-   board.innerHTML = h;
+
+   // one card per page that has missing fields
+   issues.innerHTML = (d.page_issues || []).map(p => `
+     <div class="issue-card">
+       <div class="issue-head">
+         <span class="pg-name">${p.product}</span>
+         <span class="pg-tag">page name</span>
+       </div>
+       ${p.page_url ? `<div class="pg-url">${p.page_url}</div>` : ``}
+       <ul class="miss">
+         ${p.missing_detail.map(m => `
+           <li><span class="miss-field">${m.label}</span>
+               <span class="miss-why">${m.reason}</span></li>`).join("")}
+       </ul>
+     </div>`).join("");
+
    document.getElementById("nav4").style.display = "flex";
  });
 </script>

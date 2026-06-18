@@ -1,22 +1,9 @@
 """
 API-Agent — Flask app entry point.
 
-A 7-agent wizard (separate page per agent, like the optimizer flow):
-  Agent 1  Page URL input
-  Agent 2  Design capture (CSS / JS from pasted HTML)
-  Agent 3  Content intake (1-10 files .docx/.pdf/.csv/.txt OR a Google Sheet)
-  Agent 4  Analysis (loading screen + requirements board)
-  Agent 5  Recheck & sync (auto-build missing fields)
-  Agent 7  Preview & approve
-  Agent 6  Output & download (one-by-one or bulk ZIP)
-
-Run order: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 6
-Local dev:  python app.py   ->  http://localhost:5000
-Production: gunicorn app:app   (see README.md)
-
-Session state is persisted to a small JSON file per browser (keyed by a session
-id in the cookie). This survives worker restarts and works across workers, with
-no external dependency.
+7-agent wizard (separate page per agent). Run order: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 6
+Session state persisted to a JSON file per browser (durable, no external deps).
+Local dev: python app.py   |   Production: gunicorn app:app
 """
 import json
 import logging
@@ -59,16 +46,14 @@ SESS_DIR.mkdir(exist_ok=True)
 app = Flask(__name__)
 app.config.from_object(Config)
 app.secret_key = Config.SECRET_KEY
-
 init_dirs()
 
 
-# ----------------------------------------------------------------------
-# Durable per-browser store.
-# The cookie holds only a small session id; the wizard's data (pasted HTML,
-# 202 page records, etc.) is kept in a JSON file on disk. Loaded once per
-# request into flask.g, and written back after the response.
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------- #
+# Durable per-browser store: cookie holds a small session id; the wizard's
+# data is kept in a JSON file on disk, loaded into flask.g per request and
+# written back after the response.
+# ---------------------------------------------------------------------- #
 def _sid() -> str:
     sid = session.get("sid")
     if not sid:
@@ -95,8 +80,8 @@ def sdata() -> dict:
 def clear_sdata():
     sid = session.pop("sid", None)
     if sid:
-        p = _path(sid)
         try:
+            p = _path(sid)
             if p.exists():
                 p.unlink()
         except Exception:
@@ -116,12 +101,9 @@ def _persist(resp):
     return resp
 
 
-# Run order + page metadata for the progress nav.
 FLOW = Config.AGENT_ORDER  # [1, 2, 3, 4, 5, 7, 6]
-LABELS = {
-    1: "URL", 2: "Design", 3: "Content",
-    4: "Analyze", 5: "Sync", 7: "Approve", 6: "Download",
-}
+LABELS = {1: "URL", 2: "Design", 3: "Content",
+          4: "Analyze", 5: "Sync", 7: "Approve", 6: "Download"}
 
 
 def _next(agent: int) -> int:
@@ -164,24 +146,22 @@ def too_large(_):
     return redirect(url_for("agent", n=3))
 
 
-# ---- Generic GET for any agent page ----
 @app.route("/agent/<int:n>")
 def agent(n):
     if n not in FLOW:
         return redirect(url_for("agent", n=1))
     d = sdata()
-    tpl = f"agent{n}.html"
     ctx = dict(n=n, nxt=_next(n), prv=_prev(n), data=d,
                max_files=Config.MAX_UPLOAD_FILES,
+               max_build=Config.MAX_BUILD_PAGES,
                allowed=sorted(Config.ALLOWED_EXTENSIONS))
     if n == 1:
         ctx["url"] = d.get("agent1", {}).get("url", "")
     if n == 6:
         ctx["built"] = d.get("built", [])
-    return render_template(tpl, **ctx)
+    return render_template(f"agent{n}.html", **ctx)
 
 
-# ---- Agent 1: URL ----
 @app.route("/agent/1", methods=["POST"])
 def post_agent1():
     res = a1.run(request.form.get("url", ""))
@@ -192,7 +172,6 @@ def post_agent1():
     return redirect(url_for("agent", n=_next(1)))
 
 
-# ---- Agent 2: Design ----
 @app.route("/agent/2", methods=["POST"])
 def post_agent2():
     res = a2.run(html=request.form.get("html", ""),
@@ -205,7 +184,6 @@ def post_agent2():
     return redirect(url_for("agent", n=_next(2)))
 
 
-# ---- Agent 3: Content (files OR sheet) ----
 @app.route("/agent/3", methods=["POST"])
 def post_agent3():
     mode = request.form.get("mode", "files")
@@ -222,7 +200,6 @@ def post_agent3():
     return redirect(url_for("agent", n=_next(3)))
 
 
-# ---- Agent 4: Analysis (called by the processing screen) ----
 @app.route("/api/agent4/analyze", methods=["POST"])
 def api_agent4():
     res = a4.run(sdata())
@@ -230,7 +207,6 @@ def api_agent4():
     return jsonify(res)
 
 
-# ---- Agent 5: Sync ----
 @app.route("/api/agent5/sync", methods=["POST"])
 def api_agent5():
     res = a5.run(sdata())
@@ -238,7 +214,6 @@ def api_agent5():
     return jsonify(res)
 
 
-# ---- Agent 7: Preview & approve ----
 @app.route("/api/agent7/preview")
 def api_agent7_preview():
     return jsonify(a7.preview(sdata()))
@@ -247,12 +222,14 @@ def api_agent7_preview():
 @app.route("/agent/7", methods=["POST"])
 def post_agent7():
     ids = request.form.getlist("approved_ids")
+    if len(ids) > Config.MAX_BUILD_PAGES:
+        flash(f"You can build at most {Config.MAX_BUILD_PAGES} pages per round.", "error")
+        return redirect(url_for("agent", n=7))
     res = a7.approve(sdata(), ids)
     if not res["ok"] or res["data"]["count"] == 0:
-        flash("Approve at least one page.", "error")
+        flash(f"Approve at least one page (max {Config.MAX_BUILD_PAGES}).", "error")
         return redirect(url_for("agent", n=7))
     sdata()["agent7"] = res["data"]
-    # Build immediately, then go to the download page.
     build = a6.build(sdata())
     if not build["ok"]:
         flash(build["error"], "error")
@@ -262,7 +239,6 @@ def post_agent7():
     return redirect(url_for("agent", n=6))
 
 
-# ---- Agent 6: Download ----
 @app.route("/download/<path:filename>")
 def download_one(filename):
     return send_from_directory(Config.OUTPUT_DIR, filename, as_attachment=True)

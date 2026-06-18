@@ -26,6 +26,9 @@ class Config:
     # Ordered flow. Agent 7 (preview/approve) runs before Agent 6 (download).
     AGENT_ORDER = [1, 2, 3, 4, 5, 7, 6]
 
+    # Max pages that can be approved & built in one round.
+    MAX_BUILD_PAGES = int(os.environ.get("MAX_BUILD_PAGES", 5))
+
 
 def init_dirs():
     Config.UPLOAD_DIR.mkdir(exist_ok=True)

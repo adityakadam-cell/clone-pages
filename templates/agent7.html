@@ -2,12 +2,16 @@
 {% block title %}Agent 7 — Approve{% endblock %}
 {% block body %}
   <h2>Agent 7 — Preview &amp; approve</h2>
+  <p class="hint">Pick up to <b>{{ max_build }}</b> pages to build this round. Run again for the next batch.</p>
   <div class="actions inline">
-    <button type="button" class="btn small" onclick="sel(true)">Select all</button>
+    <button type="button" class="btn small" onclick="selFirst()">Select first {{ max_build }}</button>
     <button type="button" class="btn small" onclick="sel(false)">Clear</button>
+    <span id="counter" class="counter">0 / {{ max_build }} selected</span>
   </div>
-  <form method="post" action="{{ url_for('post_agent7') }}">
-    <div id="previewList" class="preview-list"><div class="loader"><div class="spinner"></div><span>Loading preview…</span></div></div>
+  <form method="post" action="{{ url_for('post_agent7') }}" id="approveForm">
+    <div id="previewList" class="preview-grid">
+      <div class="loader"><div class="spinner"></div><span>Loading preview…</span></div>
+    </div>
     <div class="actions">
       <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
       <button class="btn primary" type="submit">Approve &amp; build &rarr;</button>
@@ -16,19 +20,43 @@
 {% endblock %}
 {% block scripts %}
 <script>
-function sel(v){ document.querySelectorAll(".appchk").forEach(c => c.checked = v); }
+const MAX = {{ max_build }};
+
+function boxes(){ return [...document.querySelectorAll(".appchk")]; }
+function count(){ return boxes().filter(c => c.checked).length; }
+function refresh(){
+  const n = count();
+  document.getElementById("counter").textContent = `${n} / ${MAX} selected`;
+  // disable unchecked boxes once the cap is reached
+  boxes().forEach(c => { if (!c.checked) c.disabled = (n >= MAX); });
+}
+function sel(v){ boxes().forEach(c => { c.checked = v; c.disabled = false; }); refresh(); }
+function selFirst(){
+  boxes().forEach((c,i) => { c.checked = (i < MAX); c.disabled = false; });
+  refresh();
+}
+
 fetch("{{ url_for('api_agent7_preview') }}").then(r=>r.json()).then(r=>{
   const items = r.data.items || [];
   document.getElementById("previewList").innerHTML = items.map(p => `
-    <div class="card">
-      <div class="row">
-        <label><input type="checkbox" class="appchk" name="approved_ids" value="${p.id}" checked> approve</label>
-        <h3>${p.product}</h3>
-      </div>
-      <div class="url">${p.page_url || "(no url)"}</div>
-      <div class="meta"><b>${p.meta_title||""}</b><br>${p.meta_description||""}</div>
-      <div class="meta">${(p.content_preview||"").replace(/</g,"&lt;")}…</div>
+    <div class="pcard">
+      <label class="pcard-head">
+        <input type="checkbox" class="appchk" name="approved_ids" value="${p.id}">
+        <span class="pcard-name">${p.product}</span>
+      </label>
+      <div class="pcard-url">${p.page_url || "(no url)"}</div>
+      <div class="pcard-meta"><b>${p.meta_title||""}</b></div>
+      <div class="pcard-meta">${p.meta_description||""}</div>
+      <div class="pcard-body">${(p.content_preview||"").replace(/</g,"&lt;")}…</div>
     </div>`).join("") || "<p class='hint'>Nothing to preview.</p>";
+  boxes().forEach(c => c.addEventListener("change", refresh));
+  refresh();
+});
+
+// safety: block submitting more than MAX
+document.getElementById("approveForm").addEventListener("submit", e => {
+  if (count() === 0){ e.preventDefault(); alert("Select at least one page."); }
+  else if (count() > MAX){ e.preventDefault(); alert("You can build at most " + MAX + " pages per round."); }
 });
 </script>
 {% endblock %}
