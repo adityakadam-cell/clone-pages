@@ -12,6 +12,11 @@ class Config:
     # Doc-cell links and the Doc content. Free to create.
     GOOGLE_API_KEY = (os.environ.get("GOOGLE_API_KEY") or "").strip()
 
+    # Service-account JSON (file path OR the raw JSON string). REQUIRED to read
+    # Google Docs — the Docs API rejects API keys (401). The service account
+    # reads any doc shared "anyone with the link" (or shared with its email).
+    GOOGLE_SERVICE_ACCOUNT_JSON = (os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON") or "").strip()
+
     # Folders
     UPLOAD_DIR = BASE_DIR / "uploads"
     OUTPUT_DIR = BASE_DIR / "output"

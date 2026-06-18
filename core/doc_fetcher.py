@@ -1,14 +1,15 @@
 """
 Fetch real page content from a link found in a sheet's "Doc" cell.
 
-Google Docs are read via the Docs API v1 (includeTabsContent). When a doc has
-multiple tabs we return ONLY one tab, chosen in this order:
+Google Docs are read via the Docs API v1 (includeTabsContent). The Docs API
+REJECTS API keys (401), so a service-account bearer token is used when
+configured (GOOGLE_SERVICE_ACCOUNT_JSON). When a doc has multiple tabs we
+return ONLY one tab, chosen by:
   1. the tab whose TITLE matches prefer_title (e.g. "Final") — most reliable,
      because chip links in sheets can point at the wrong tab id;
-  2. the tab id named in the link (…/edit?tab=t.xxxxx);
+  2. the tab id named in the link (…/edit?tab=t.xxxxx).
 If a specific tab was requested but can't be isolated, we raise a clear error
-instead of dumping every tab (which produced wrong, mixed content).
-Inline images become an [[IMAGE]] marker. Non-Google URLs are stripped to text.
+instead of dumping every tab. Inline images become an [[IMAGE]] marker.
 """
 from __future__ import annotations
 
@@ -130,11 +131,19 @@ def _walk_tabs(tabs) -> str:
 def fetch_gdoc_via_api(doc_id: str, api_key: str,
                        tab_id: str | None = None,
                        prefer_title: str | None = None) -> str:
-    r = requests.get(
-        f"{DOCS_API}{doc_id}",
-        params={"key": api_key, "includeTabsContent": "true"},
-        timeout=TIMEOUT, headers=HEADERS,
-    )
+    # The Docs API rejects API keys (401). Use a service-account bearer token
+    # when configured; only fall back to the key (which will 401) otherwise.
+    from core.google_auth import get_token
+    token = get_token()
+    headers = dict(HEADERS)
+    params = {"includeTabsContent": "true"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    else:
+        params["key"] = api_key
+
+    r = requests.get(f"{DOCS_API}{doc_id}", params=params,
+                     timeout=TIMEOUT, headers=headers)
     r.raise_for_status()
     data = r.json()
     tabs = data.get("tabs")
@@ -145,12 +154,10 @@ def fetch_gdoc_via_api(doc_id: str, api_key: str,
             tab = _find_tab_by_id(tabs, tab_id)
         if tab is not None:
             return _tab_body_text(tab)
-        # something specific was requested but not found
         if prefer_title or tab_id:
             raise TabNotFound(prefer_title or tab_id)
         return _tidy(_walk_tabs(tabs))
 
-    # doc without tabs
     return _tidy(_walk_structural((data.get("body", {}) or {}).get("content")))
 
 
@@ -190,11 +197,13 @@ def _html_to_text(html: str) -> str:
 def fetch_doc_text(url: str, api_key: str = "", prefer_title: str = "") -> str:
     """Return plain-text content for a Doc link. Prefers the tab titled
     prefer_title, else the tab named in the link."""
+    from core.google_auth import is_configured
+
     did = gdoc_id(url)
     tab_id = gdoc_tab_id(url)
     wants_tab = bool(prefer_title or tab_id)
 
-    if did and api_key:
+    if did and (api_key or is_configured()):
         try:
             text = fetch_gdoc_via_api(did, api_key, tab_id=tab_id,
                                       prefer_title=prefer_title or None)
@@ -211,9 +220,9 @@ def fetch_doc_text(url: str, api_key: str = "", prefer_title: str = "") -> str:
         except Exception as exc:
             if wants_tab:
                 raise RuntimeError(
-                    f"couldn't read the Doc via the Docs API ({exc}). Check the Doc "
-                    "is shared 'anyone with the link can view' and the Docs API is "
-                    "enabled + allowed on the key")
+                    f"couldn't read the Doc via the Docs API ({exc}). The Docs API "
+                    "needs a service account (it rejects API keys) — set "
+                    "GOOGLE_SERVICE_ACCOUNT_JSON. Also ensure the Doc is shared.")
 
     export = gdoc_export_url(url)
     target = export or url
@@ -223,7 +232,7 @@ def fetch_doc_text(url: str, api_key: str = "", prefer_title: str = "") -> str:
         text = (r.text or "").strip()
         if not text:
             raise RuntimeError("empty doc, or it uses tabs and isn't readable "
-                               "via export (enable the Docs API), or it's not shared")
+                               "via export (use a service account), or it's not shared")
         if _looks_like_login(text):
             raise RuntimeError("doc is private — share it 'anyone with the link can view'")
         return _tidy(text)

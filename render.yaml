@@ -10,7 +10,9 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: GOOGLE_API_KEY
-        sync: false           # set manually — Sheets API key for reading Doc links
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false           # path to a Secret File, or the raw JSON string           # set manually — Sheets API key for reading Doc links
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: MAX_UPLOAD_FILES

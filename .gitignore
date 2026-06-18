@@ -25,3 +25,7 @@ Thumbs.db
 
 # Server-side session files
 .sessions/
+
+# Service account key — NEVER commit
+service-account*.json
+*-service-account.json
