@@ -32,7 +32,7 @@ class Config:
     AGENT_ORDER = [2, 3, 4, 5, 7, 8, 6]
 
     # Max pages that can be approved & built in one round.
-    MAX_BUILD_PAGES = int(os.environ.get("MAX_BUILD_PAGES", 5))
+    MAX_BUILD_PAGES = int(os.environ.get("MAX_BUILD_PAGES", 10))
 
     # When a Doc has multiple tabs, prefer the tab with this title (case-
     # insensitive). The chip's tab id is only a fallback. Set "" to disable.

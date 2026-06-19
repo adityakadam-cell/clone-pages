@@ -249,7 +249,8 @@ def post_agent3():
         return redirect(url_for("agent", n=3))
     sdata()["agent3"] = res["data"]
     flash(res["message"], "ok")
-    return redirect(url_for("agent", n=_next(3)))
+    # AI runs automatically once design + content are in: advance end-to-end.
+    return _run_auto_pipeline()
 
 
 @app.route("/api/agent4/analyze", methods=["POST"])
@@ -310,10 +311,10 @@ def api_agent6_zip():
     return jsonify(a6.zip_pages(data.get("filenames", [])))
 
 
-@app.route("/auto", methods=["POST"])
-def auto_build():
-    """One-click: run Analyze -> Sync -> Approve(next batch) -> Build -> Verify
-    end-to-end. The step stages stay visible; this just advances them for you."""
+def _run_auto_pipeline():
+    """Run Analyze -> Sync -> Approve(next batch) -> Build(AI) -> Verify in one
+    shot. Used both by the Auto-build button and automatically after content is
+    loaded. The step stages stay visible; this advances them for you."""
     d = sdata()
     if "agent2" not in d or "agent3" not in d:
         flash("Add the design (Step 1) and content (Step 3) first.", "error")
@@ -338,9 +339,14 @@ def auto_build():
         log.exception("auto-build failed")
         flash(f"Auto-build hit an error: {exc}", "error")
         return redirect(url_for("agent", n=4))
-    flash(f"Auto-built {len(ids)} page(s). Review the verification below, "
-          f"then download.", "ok")
+    flash(f"Auto-built {len(ids)} page(s) with AI. Review the verification "
+          f"below, then download.", "ok")
     return redirect(url_for("agent", n=8))
+
+
+@app.route("/auto", methods=["POST"])
+def auto_build():
+    return _run_auto_pipeline()
 
 
 if __name__ == "__main__":
