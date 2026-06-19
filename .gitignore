@@ -29,3 +29,6 @@ Thumbs.db
 # Service account key — NEVER commit
 service-account*.json
 *-service-account.json
+consummate-sled-*.json
+*gserviceaccount*.json
+*-d6-*.json
