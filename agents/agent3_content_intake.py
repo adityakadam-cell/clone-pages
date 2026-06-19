@@ -69,11 +69,12 @@ def _doc_content(rec, api_key: str = ""):
 
     target = link or (value if is_url(value) else "")
     if target:
-        text, err = safe_fetch(target, api_key=api_key, prefer_title=Config.DOC_TAB_TITLE)
+        text, err, resolved = safe_fetch(target, api_key=api_key,
+                                         prefer_title=Config.DOC_TAB_TITLE)
         if text:
-            return text, ""
-        return value, f"could not fetch doc link ({err})"
-    return value, ""
+            return text, "", resolved          # link points at the tab used
+        return value, f"could not fetch doc link ({err})", target
+    return value, "", target
 
 
 def run_sheet(sheet_url, api_key: str = ""):
@@ -95,7 +96,7 @@ def run_sheet(sheet_url, api_key: str = ""):
 
     pages, fetched, notes = [], 0, []
     for r in rows:
-        content, note = _doc_content(r, api_key=api_key)
+        content, note, doc_url = _doc_content(r, api_key=api_key)
         if note:
             notes.append(f"{r.get('product','?')}: {note}")
         if content and content != (r.get("doc") or "").strip():
@@ -104,7 +105,7 @@ def run_sheet(sheet_url, api_key: str = ""):
             "product": r.get("product", ""),
             "slug": slugify(r.get("product", "")),
             "content": content,
-            "doc_url": (r.get("doc_link") or ""),
+            "doc_url": (doc_url or r.get("doc_link") or ""),
             "page_url": (r.get("page_url_link") or r.get("page_url", "")),
             "meta_title": r.get("meta_title", ""),
             "meta_description": r.get("meta_description", ""),

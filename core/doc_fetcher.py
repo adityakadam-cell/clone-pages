@@ -1,15 +1,11 @@
 """
 Fetch real page content from a link found in a sheet's "Doc" cell.
 
-Google Docs are read via the Docs API v1 (includeTabsContent). The Docs API
-REJECTS API keys (401), so a service-account bearer token is used when
-configured (GOOGLE_SERVICE_ACCOUNT_JSON). When a doc has multiple tabs we
-return ONLY one tab, chosen by:
-  1. the tab whose TITLE matches prefer_title (e.g. "Final") — most reliable,
-     because chip links in sheets can point at the wrong tab id;
-  2. the tab id named in the link (…/edit?tab=t.xxxxx).
-If a specific tab was requested but can't be isolated, we raise a clear error
-instead of dumping every tab. Inline images become an [[IMAGE]] marker.
+Reads Google Docs via the Docs API v1 (includeTabsContent) using a service
+account (the Docs API rejects API keys). When a doc has tabs, returns ONLY the
+tab whose TITLE matches prefer_title (e.g. "Final"); the chip's tab id is a
+fallback. Also returns the *resolved* doc URL pointing at the tab actually used,
+so callers can show a link that opens the right tab. Inline images -> [[IMAGE]].
 """
 from __future__ import annotations
 
@@ -53,6 +49,11 @@ def gdoc_tab_id(url: str) -> str | None:
 def gdoc_export_url(url: str) -> str | None:
     did = gdoc_id(url)
     return f"https://docs.google.com/document/d/{did}/export?format=txt" if did else None
+
+
+def doc_url_with_tab(doc_id: str, tab_id: str = "") -> str:
+    base = f"https://docs.google.com/document/d/{doc_id}/edit"
+    return f"{base}?tab={tab_id}" if tab_id else base
 
 
 # ---------------------------------------------------------------------- #
@@ -128,11 +129,9 @@ def _walk_tabs(tabs) -> str:
     return "".join(out)
 
 
-def fetch_gdoc_via_api(doc_id: str, api_key: str,
-                       tab_id: str | None = None,
-                       prefer_title: str | None = None) -> str:
-    # The Docs API rejects API keys (401). Use a service-account bearer token
-    # when configured; only fall back to the key (which will 401) otherwise.
+def fetch_gdoc_via_api(doc_id, api_key, tab_id=None, prefer_title=None):
+    """Returns (text, resolved_tab_id). Raises TabNotFound if a requested tab
+    can't be isolated."""
     from core.google_auth import get_token
     token = get_token()
     headers = dict(HEADERS)
@@ -153,12 +152,13 @@ def fetch_gdoc_via_api(doc_id: str, api_key: str,
         if tab is None and tab_id:
             tab = _find_tab_by_id(tabs, tab_id)
         if tab is not None:
-            return _tab_body_text(tab)
+            tid = (tab.get("tabProperties", {}) or {}).get("tabId", "")
+            return _tab_body_text(tab), tid
         if prefer_title or tab_id:
             raise TabNotFound(prefer_title or tab_id)
-        return _tidy(_walk_tabs(tabs))
+        return _tidy(_walk_tabs(tabs)), ""
 
-    return _tidy(_walk_structural((data.get("body", {}) or {}).get("content")))
+    return _tidy(_walk_structural((data.get("body", {}) or {}).get("content"))), ""
 
 
 def _tidy(text: str) -> str:
@@ -194,9 +194,8 @@ def _html_to_text(html: str) -> str:
     return "\n".join(ln for ln in lines if ln)
 
 
-def fetch_doc_text(url: str, api_key: str = "", prefer_title: str = "") -> str:
-    """Return plain-text content for a Doc link. Prefers the tab titled
-    prefer_title, else the tab named in the link."""
+def fetch_doc_text(url: str, api_key: str = "", prefer_title: str = ""):
+    """Returns (text, resolved_url). resolved_url points at the tab used."""
     from core.google_auth import is_configured
 
     did = gdoc_id(url)
@@ -205,10 +204,11 @@ def fetch_doc_text(url: str, api_key: str = "", prefer_title: str = "") -> str:
 
     if did and (api_key or is_configured()):
         try:
-            text = fetch_gdoc_via_api(did, api_key, tab_id=tab_id,
-                                      prefer_title=prefer_title or None)
+            text, tid = fetch_gdoc_via_api(did, api_key, tab_id=tab_id,
+                                           prefer_title=prefer_title or None)
             if text:
-                return text
+                resolved = doc_url_with_tab(did, tid or tab_id or "")
+                return text, resolved
             if wants_tab:
                 raise RuntimeError("the linked Doc tab is empty")
         except TabNotFound:
@@ -235,14 +235,16 @@ def fetch_doc_text(url: str, api_key: str = "", prefer_title: str = "") -> str:
                                "via export (use a service account), or it's not shared")
         if _looks_like_login(text):
             raise RuntimeError("doc is private — share it 'anyone with the link can view'")
-        return _tidy(text)
-    return _html_to_text(r.text)
+        return _tidy(text), url
+    return _html_to_text(r.text), url
 
 
-def safe_fetch(url: str, api_key: str = "", prefer_title: str = "") -> tuple[str, str]:
+def safe_fetch(url: str, api_key: str = "", prefer_title: str = ""):
+    """Returns (text, error, resolved_url)."""
     if not is_url(url):
-        return "", "not a url"
+        return "", "not a url", url
     try:
-        return fetch_doc_text(url, api_key=api_key, prefer_title=prefer_title), ""
+        text, resolved = fetch_doc_text(url, api_key=api_key, prefer_title=prefer_title)
+        return text, "", resolved
     except Exception as exc:        # pragma: no cover - network dependent
-        return "", str(exc)
+        return "", str(exc), url
