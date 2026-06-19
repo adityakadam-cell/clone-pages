@@ -1,15 +1,18 @@
 """
 Agent 6 — Output & download.
 
-Uses the reference HTML as a design SHELL and injects the Doc content:
-  * the reference page's subject (its first banner <h1>) is replaced everywhere
-    with the product title;
+Reference HTML = design SHELL; the Doc content is injected into it:
+  * banner <h1> subject -> product title (everywhere);
   * the main <article> is replaced with the Doc's sections, re-styled with the
-    design's own content classes (.content-section / .section-title /
-    .section-text / .data-table ...), so it matches the design;
-  * the intro region (.*short-description) gets the Doc's lead-in paragraphs;
-  * the sidebar, banner, header and footer are preserved.
-Inline images become a placeholder; broken images swap to it.
+    design's content classes (.content-section/.section-title/.section-text/
+    .data-table);
+  * SPECIAL sections are rebuilt into the design's own components when detected:
+      - "FAQ"            -> .faq-item / .faq-q / .faq-a accordion (+ toggle JS);
+      - "...Applications" -> .card-app-card grid;
+      - "Types..."       -> .form-card grid;
+  * intro region (.*short-description) gets the Doc's lead-in paragraphs;
+  * sidebar, banner, header, footer preserved.
+Inline images -> placeholder; broken images swap to it.
 """
 import re
 import zipfile
@@ -88,6 +91,10 @@ def _cls(el):
     return " ".join(c) if c else ""
 
 
+def _find_cls(root, pattern):
+    return root.find(class_=re.compile(pattern)) if root else None
+
+
 def _detect_vocab(scope):
     v = {"section": "", "title": "", "h3": "", "text": "",
          "table": "", "table_wrap": "", "divider": ""}
@@ -117,6 +124,40 @@ def _detect_vocab(scope):
     return v
 
 
+def _detect_special(root):
+    sp = {"faq": None, "app": None, "form": None}
+    item = _find_cls(root, r"\bfaq-item\b")
+    if item:
+        q = _find_cls(item, r"faq-q")
+        a = _find_cls(item, r"faq-a")
+        icon = _find_cls(item, r"faq-icon")
+        sp["faq"] = {"item": _cls(item), "q": _cls(q) if q else "faq-q",
+                     "a": _cls(a) if a else "faq-a",
+                     "icon": _cls(icon) if icon else "faq-icon",
+                     "onclick": (q.get("onclick") if q else "") or "toggleFaq(this)",
+                     "icon_txt": (icon.get_text() if icon else "+") or "+"}
+    card = _find_cls(root, r"card-app-card")
+    if card:
+        grid = card.find_parent(class_=re.compile(r"card-app-grid"))
+        sp["app"] = {"grid": _cls(grid) if grid else "card-app-grid",
+                     "card": _cls(card),
+                     "top": _cls(_find_cls(card, r"card-app-top") or card) or "card-app-top",
+                     "icon": _cls(_find_cls(card, r"card-app-icon")) or "card-app-icon",
+                     "icon_txt": (_find_cls(card, r"card-app-icon").get_text()
+                                  if _find_cls(card, r"card-app-icon") else "◆"),
+                     "title": _cls(_find_cls(card, r"card-app-title")) or "card-app-title",
+                     "text": _cls(_find_cls(card, r"card-app-text")) or "card-app-text"}
+    fcard = _find_cls(root, r"\bform-card\b")
+    if fcard:
+        grid = fcard.find_parent(class_=re.compile(r"form-cards-grid"))
+        sp["form"] = {"grid": _cls(grid) if grid else "row g-4 form-cards-grid",
+                      "col": "col-md-4", "card": _cls(fcard),
+                      "media": _cls(_find_cls(fcard, r"form-card-media")) or "form-card-media",
+                      "body": _cls(_find_cls(fcard, r"form-card-body")) or "form-card-body",
+                      "title": _cls(_find_cls(fcard, r"form-card-title")) or "form-card-title"}
+    return sp
+
+
 def _ca(name):
     return f' class="{name}"' if name else ""
 
@@ -142,9 +183,6 @@ def _heading_level(name):
 
 
 def _section_level(nodes):
-    """Section level = the shallowest heading level that repeats (>=2). Docs use
-    'Heading 2' for sections (-> h3 here) and 'Heading 3' for sub-points;
-    subsections often outnumber sections, so don't pick the most common one."""
     levels = [_heading_level(getattr(n, "name", "")) for n in nodes]
     levels = [l for l in levels if l]
     if not levels:
@@ -154,33 +192,103 @@ def _section_level(nodes):
     return repeated[0] if repeated else min(levels)
 
 
-def _style_sections(nodes, v):
-    sec_lvl = _section_level(nodes)
-    sections, cur = [], {"title": None, "body": []}
+def _pairs(nodes):
+    """Pair each heading with the paragraphs that follow it -> [(title, body_html)]."""
+    out, title, body = [], None, []
+    for n in nodes:
+        if _heading_level(getattr(n, "name", "")):
+            if title is not None:
+                out.append((title, "".join(body)))
+            title, body = n.decode_contents(), []
+        elif getattr(n, "name", None):
+            body.append(str(n) if n.name != "p" else f"<p>{n.decode_contents()}</p>")
+    if title is not None:
+        out.append((title, "".join(body)))
+    return out
+
+
+def _render_faq(nodes, faq):
+    items = []
+    for q, a in _pairs(nodes):
+        items.append(
+            f'<div class="{faq["item"]}"><div class="{faq["q"]}" onclick="{faq["onclick"]}">'
+            f'{q}<span class="{faq["icon"]}">{faq["icon_txt"]}</span></div>'
+            f'<div class="{faq["a"]}">{a}</div></div>')
+    return "".join(items)
+
+
+def _render_app_cards(nodes, app):
+    cards = []
+    for title, body in _pairs(nodes):
+        txt = re.sub(r"</?p>", " ", body).strip()
+        cards.append(
+            f'<article class="{app["card"]}"><div class="{app["top"]}">'
+            f'<span class="{app["icon"]}">{app["icon_txt"]}</span>'
+            f'<h3 class="{app["title"]}">{title}</h3></div>'
+            f'<p class="{app["text"]}">{txt}</p></article>')
+    return f'<div class="{app["grid"]}">{"".join(cards)}</div>' if cards else ""
+
+
+def _render_form_cards(nodes, form):
+    titles = []
+    for n in nodes:
+        if _heading_level(getattr(n, "name", "")):
+            titles.append(n.decode_contents())
+        elif getattr(n, "name", None) in ("ul", "ol"):
+            titles += [li.decode_contents() for li in n.find_all("li")]
+    cards = [
+        f'<div class="{form["col"]}"><div class="{form["card"]}">'
+        f'<div class="{form["media"]}">{PLACEHOLDER_IMG}</div>'
+        f'<div class="{form["body"]}"><h3 class="{form["title"]}">{t}</h3></div></div></div>'
+        for t in titles]
+    return f'<div class="{form["grid"]}">{"".join(cards)}</div>' if cards else ""
+
+
+def _render_body(nodes, v):
+    out = []
     for n in nodes:
         nm = getattr(n, "name", None)
-        lvl = _heading_level(nm)
-        if lvl and lvl <= sec_lvl:
-            if cur["title"] is not None or cur["body"]:
-                sections.append(cur)
-            cur = {"title": n.decode_contents(), "body": []}
-        elif lvl:
-            cur["body"].append(f'<h3{_ca(v["h3"] or v["title"])}>{n.decode_contents()}</h3>')
+        if _heading_level(nm):
+            out.append(f'<h3{_ca(v["h3"] or v["title"])}>{n.decode_contents()}</h3>')
         elif nm == "table":
-            cur["body"].append(_style_table(n, v))
+            out.append(_style_table(n, v))
         elif nm == "p":
-            cur["body"].append(f'<p{_ca(v["text"])}>{n.decode_contents()}</p>')
+            out.append(f'<p{_ca(v["text"])}>{n.decode_contents()}</p>')
         elif nm:
-            cur["body"].append(str(n))
-    if cur["title"] is not None or cur["body"]:
-        sections.append(cur)
+            out.append(str(n))
+    return "".join(out)
+
+
+def _style_sections(nodes, v, special):
+    sec_lvl = _section_level(nodes)
+    groups, cur = [], {"title": None, "ttext": "", "nodes": []}
+    for n in nodes:
+        lvl = _heading_level(getattr(n, "name", ""))
+        if lvl and lvl <= sec_lvl:
+            if cur["title"] is not None or cur["nodes"]:
+                groups.append(cur)
+            cur = {"title": n.decode_contents(),
+                   "ttext": n.get_text(" ", strip=True).lower(), "nodes": []}
+        else:
+            cur["nodes"].append(n)
+    if cur["title"] is not None or cur["nodes"]:
+        groups.append(cur)
 
     html = []
-    for s in sections:
+    for g in groups:
+        t = g["ttext"]
+        if special.get("faq") and ("faq" in t or "frequently asked" in t):
+            body = _render_faq(g["nodes"], special["faq"]) or _render_body(g["nodes"], v)
+        elif special.get("app") and "application" in t:
+            body = _render_app_cards(g["nodes"], special["app"]) or _render_body(g["nodes"], v)
+        elif special.get("form") and re.search(r"\b(types?|forms?|shapes?)\b", t):
+            body = _render_form_cards(g["nodes"], special["form"]) or _render_body(g["nodes"], v)
+        else:
+            body = _render_body(g["nodes"], v)
         inner = ""
-        if s["title"] is not None:
-            inner += f'<h2{_ca(v["title"])}>{s["title"]}</h2>{v["divider"]}'
-        inner += "".join(s["body"])
+        if g["title"] is not None:
+            inner += f'<h2{_ca(v["title"])}>{g["title"]}</h2>{v["divider"]}'
+        inner += body
         html.append(f'<section{_ca(v["section"])}>{inner}</section>')
     return "".join(html)
 
@@ -201,8 +309,7 @@ def _style_intro(nodes, intro_cls):
 def _split_intro(nodes):
     sec_lvl = _section_level(nodes)
     for i, n in enumerate(nodes):
-        lvl = _heading_level(getattr(n, "name", ""))
-        if lvl and lvl <= sec_lvl:
+        if _heading_level(getattr(n, "name", "")) and _heading_level(n.name) <= sec_lvl:
             return nodes[:i], nodes[i:]
     return nodes, []
 
@@ -235,6 +342,8 @@ def _inject(design, page):
     root = soup.body or soup
     new_title = (page.get("product") or page.get("meta_title") or "").strip()
 
+    special = _detect_special(root)
+
     h1 = root.find("h1")
     ref_title = h1.get_text(" ", strip=True) if h1 else ""
     if h1 and new_title:
@@ -255,7 +364,7 @@ def _inject(design, page):
 
     if article is not None:
         body_nodes = section_nodes or nodes
-        _set_inner(article, _style_sections(body_nodes, vocab) or "<p></p>")
+        _set_inner(article, _style_sections(body_nodes, vocab, special) or "<p></p>")
         if section_nodes:
             intro_el = root.find(class_=re.compile("short-description"))
             holder = intro_el.parent if intro_el else None
@@ -266,7 +375,7 @@ def _inject(design, page):
     else:
         sec = soup.new_tag("section")
         sec["class"] = "api-agent-content"
-        _set_inner(sec, _style_sections(nodes, vocab))
+        _set_inner(sec, _style_sections(nodes, vocab, special))
         root.append(sec)
 
     body_html = root.decode_contents()
