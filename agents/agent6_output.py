@@ -13,6 +13,7 @@ Inline images become a placeholder; broken images swap to it.
 """
 import re
 import zipfile
+from collections import Counter
 from html import escape
 
 from bs4 import BeautifulSoup, NavigableString
@@ -88,9 +89,10 @@ def _cls(el):
 
 
 def _detect_vocab(scope):
-    """Learn the design's content class names from the reference content area."""
     v = {"section": "", "title": "", "h3": "", "text": "",
          "table": "", "table_wrap": "", "divider": ""}
+    if scope is None:
+        return v
     h2 = scope.find("h2")
     if h2:
         v["title"] = _cls(h2)
@@ -135,16 +137,34 @@ def _style_table(node, v):
     return t
 
 
+def _heading_level(name):
+    return int(name[1]) if name and re.match(r"h[1-6]$", name) else 0
+
+
+def _section_level(nodes):
+    """Section level = the shallowest heading level that repeats (>=2). Docs use
+    'Heading 2' for sections (-> h3 here) and 'Heading 3' for sub-points;
+    subsections often outnumber sections, so don't pick the most common one."""
+    levels = [_heading_level(getattr(n, "name", "")) for n in nodes]
+    levels = [l for l in levels if l]
+    if not levels:
+        return 2
+    counts = Counter(levels)
+    repeated = [l for l in sorted(counts) if counts[l] >= 2]
+    return repeated[0] if repeated else min(levels)
+
+
 def _style_sections(nodes, v):
-    """Turn the doc's heading/paragraph/table flow into design content-sections."""
+    sec_lvl = _section_level(nodes)
     sections, cur = [], {"title": None, "body": []}
     for n in nodes:
         nm = getattr(n, "name", None)
-        if nm in ("h1", "h2"):
+        lvl = _heading_level(nm)
+        if lvl and lvl <= sec_lvl:
             if cur["title"] is not None or cur["body"]:
                 sections.append(cur)
             cur = {"title": n.decode_contents(), "body": []}
-        elif nm == "h3":
+        elif lvl:
             cur["body"].append(f'<h3{_ca(v["h3"] or v["title"])}>{n.decode_contents()}</h3>')
         elif nm == "table":
             cur["body"].append(_style_table(n, v))
@@ -166,7 +186,6 @@ def _style_sections(nodes, v):
 
 
 def _style_intro(nodes, intro_cls):
-    """Lead-in paragraphs (before the first heading) for the intro region."""
     out = []
     for n in nodes:
         nm = getattr(n, "name", None)
@@ -180,64 +199,19 @@ def _style_intro(nodes, intro_cls):
 
 
 def _split_intro(nodes):
-    """Return (intro_nodes_before_first_heading, section_nodes_from_first_heading)."""
+    sec_lvl = _section_level(nodes)
     for i, n in enumerate(nodes):
-        if getattr(n, "name", None) in ("h1", "h2"):
+        lvl = _heading_level(getattr(n, "name", ""))
+        if lvl and lvl <= sec_lvl:
             return nodes[:i], nodes[i:]
     return nodes, []
 
 
-def _set_inner(el, html, soup):
+def _set_inner(el, html):
     el.clear()
     frag = BeautifulSoup(html, "lxml")
     for n in list((frag.body or frag).children):
         el.append(n)
-
-
-def _inject(design, page):
-    template_html = design.get("template_html", "") or ""
-    soup = BeautifulSoup(template_html, "lxml")
-    root = soup.body or soup
-    new_title = (page.get("product") or page.get("meta_title") or "").strip()
-
-    # 1. Title — banner H1, then replace the reference subject everywhere.
-    h1 = root.find("h1")
-    ref_title = h1.get_text(" ", strip=True) if h1 else ""
-    if h1 and new_title:
-        h1.clear()
-        h1.append(NavigableString(new_title))
-    if ref_title and new_title and ref_title != new_title:
-        for tn in list(root.find_all(string=True)):
-            if ref_title in tn:
-                tn.replace_with(tn.replace(ref_title, new_title))
-
-    # 2. Doc content -> intro + sections.
-    content_html = page.get("content", "") or ""
-    content_html = re.sub(r"^\s*<h1>.*?</h1>", "", content_html, count=1, flags=re.S | re.I)
-    nodes = _doc_nodes(content_html)
-    intro_nodes, section_nodes = _split_intro(nodes)
-
-    article = root.find("article") or _content_fallback(root, h1)
-    vocab = _detect_vocab(article) if article else {k: "" for k in
-            ("section", "title", "h3", "text", "table", "table_wrap", "divider")}
-
-    if article is not None:
-        body_nodes = section_nodes or nodes
-        _set_inner(article, _style_sections(body_nodes, vocab) or "<p></p>", soup)
-        if section_nodes:           # only split intro out when there are sections
-            intro_el = root.find(class_=re.compile("short-description"))
-            holder = intro_el.parent if intro_el else None
-            if holder is not None:
-                intro_cls = _cls(intro_el)
-                _set_inner(holder, _style_intro(intro_nodes, intro_cls)
-                           or f'<div{_ca(intro_cls)}></div>', soup)
-    else:
-        sec = soup.new_tag("section"); sec["class"] = "api-agent-content"
-        _set_inner(sec, _style_sections(nodes, vocab), soup)
-        root.append(sec)
-
-    body_html = root.decode_contents()
-    return body_html.replace(IMAGE_MARK, PLACEHOLDER_IMG)
 
 
 def _content_fallback(root, h1):
@@ -253,6 +227,50 @@ def _content_fallback(root, h1):
         if len(text) >= 120 and len(text) > best_len:
             best, best_len = el, len(text)
     return best
+
+
+def _inject(design, page):
+    template_html = design.get("template_html", "") or ""
+    soup = BeautifulSoup(template_html, "lxml")
+    root = soup.body or soup
+    new_title = (page.get("product") or page.get("meta_title") or "").strip()
+
+    h1 = root.find("h1")
+    ref_title = h1.get_text(" ", strip=True) if h1 else ""
+    if h1 and new_title:
+        h1.clear()
+        h1.append(NavigableString(new_title))
+    if ref_title and new_title and ref_title != new_title:
+        for tn in list(root.find_all(string=True)):
+            if ref_title in tn:
+                tn.replace_with(tn.replace(ref_title, new_title))
+
+    content_html = page.get("content", "") or ""
+    content_html = re.sub(r"^\s*<h1>.*?</h1>", "", content_html, count=1, flags=re.S | re.I)
+    nodes = _doc_nodes(content_html)
+    intro_nodes, section_nodes = _split_intro(nodes)
+
+    article = root.find("article") or _content_fallback(root, h1)
+    vocab = _detect_vocab(article)
+
+    if article is not None:
+        body_nodes = section_nodes or nodes
+        _set_inner(article, _style_sections(body_nodes, vocab) or "<p></p>")
+        if section_nodes:
+            intro_el = root.find(class_=re.compile("short-description"))
+            holder = intro_el.parent if intro_el else None
+            if holder is not None:
+                intro_cls = _cls(intro_el)
+                _set_inner(holder, _style_intro(intro_nodes, intro_cls)
+                           or f'<div{_ca(intro_cls)}></div>')
+    else:
+        sec = soup.new_tag("section")
+        sec["class"] = "api-agent-content"
+        _set_inner(sec, _style_sections(nodes, vocab))
+        root.append(sec)
+
+    body_html = root.decode_contents()
+    return body_html.replace(IMAGE_MARK, PLACEHOLDER_IMG)
 
 
 def _approved_pages(state):
