@@ -1,7 +1,7 @@
 """
 API-Agent — Flask app entry point.
 
-7-agent wizard (separate page per agent). Run order: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 6
+7-agent wizard. Run order: 1 -> 2 -> 3 -> 4 -> 5 -> 7 -> 8 -> 6
 Session state persisted to a JSON file per browser (durable, no external deps).
 Local dev: python app.py   |   Production: gunicorn app:app
 """
@@ -52,9 +52,7 @@ init_dirs()
 
 
 # ---------------------------------------------------------------------- #
-# Durable per-browser store: cookie holds a small session id; the wizard's
-# data is kept in a JSON file on disk, loaded into flask.g per request and
-# written back after the response.
+# Durable per-browser store (JSON file on disk, keyed by a cookie sid).
 # ---------------------------------------------------------------------- #
 def _sid() -> str:
     sid = session.get("sid")
@@ -103,7 +101,7 @@ def _persist(resp):
     return resp
 
 
-FLOW = Config.AGENT_ORDER  # [1, 2, 3, 4, 5, 7, 6]
+FLOW = Config.AGENT_ORDER  # [1, 2, 3, 4, 5, 7, 8, 6]
 LABELS = {1: "URL", 2: "Design", 3: "Content", 4: "Analyze",
           5: "Sync", 7: "Approve", 8: "Verify", 6: "Download"}
 
@@ -134,6 +132,32 @@ def home():
 @app.route("/healthz")
 def healthz():
     return {"status": "ok"}, 200
+
+
+@app.route("/docs-check")
+def docs_check():
+    """Verify the Google Docs service account is wired up.
+    Visit this URL after setting GOOGLE_SERVICE_ACCOUNT_JSON."""
+    from core.google_auth import is_configured, get_token, _account_info
+    configured = is_configured()
+    token = get_token() if configured else None
+    email = ""
+    try:
+        info = _account_info() or {}
+        email = info.get("client_email", "")
+    except Exception:
+        pass
+    ok_all = configured and bool(token)
+    return jsonify({
+        "service_account_configured": configured,
+        "token_obtained": bool(token),
+        "client_email": email,
+        "ready_to_read_docs": ok_all,
+        "hint": ("All good — Docs will be read via the service account."
+                 if ok_all else
+                 "Set GOOGLE_SERVICE_ACCOUNT_JSON (Render env var = Secret File "
+                 "path or raw JSON) and redeploy."),
+    }), (200 if ok_all else 503)
 
 
 @app.route("/restart")
@@ -237,7 +261,7 @@ def post_agent7():
         flash(build["error"], "error")
         return redirect(url_for("agent", n=7))
     sdata()["built"] = build["data"]["built"]
-    registry.mark_built(build["data"]["built"])   # remember for next sessions
+    registry.mark_built(build["data"]["built"])
     flash(build["message"], "ok")
     return redirect(url_for("agent", n=8))
 
