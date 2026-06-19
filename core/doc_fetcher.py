@@ -10,6 +10,7 @@ so callers can show a link that opens the right tab. Inline images -> [[IMAGE]].
 from __future__ import annotations
 
 import re
+from html import escape as _esc
 from urllib.parse import urlparse
 
 import requests
@@ -80,6 +81,83 @@ def _walk_structural(content) -> str:
         if toc:
             out.append(_walk_structural(toc.get("content")))
     return "".join(out)
+
+
+_HEAD_MAP = {"TITLE": "h1", "SUBTITLE": "p",
+             "HEADING_1": "h2", "HEADING_2": "h3", "HEADING_3": "h4",
+             "HEADING_4": "h5", "HEADING_5": "h6", "HEADING_6": "h6"}
+
+
+def _runs_html(elements) -> str:
+    parts = []
+    for e in elements or []:
+        tr = e.get("textRun")
+        if tr and tr.get("content"):
+            txt = _esc(tr["content"].replace("\n", ""))
+            if txt.strip():
+                st = tr.get("textStyle", {}) or {}
+                link = (st.get("link", {}) or {}).get("url")
+                if link:
+                    txt = f'<a href="{_esc(link)}">{txt}</a>'
+                if st.get("bold"):
+                    txt = f"<strong>{txt}</strong>"
+                if st.get("italic"):
+                    txt = f"<em>{txt}</em>"
+            parts.append(txt)
+        if "inlineObjectElement" in e:
+            parts.append(IMAGE_MARK)
+    return "".join(parts)
+
+
+def _para_html(para) -> str:
+    inner = _runs_html(para.get("elements")).strip()
+    if not inner:
+        return ""
+    if para.get("bullet") is not None:
+        return f"<li>{inner}</li>"
+    style = (para.get("paragraphStyle", {}) or {}).get("namedStyleType", "NORMAL_TEXT")
+    tag = _HEAD_MAP.get(style, "p")
+    return f"<{tag}>{inner}</{tag}>"
+
+
+def _structural_html(content) -> str:
+    out, list_open = [], False
+    for el in content or []:
+        para = el.get("paragraph")
+        if para is not None:
+            h = _para_html(para)
+            if not h:
+                continue
+            is_li = h.startswith("<li>")
+            if is_li and not list_open:
+                out.append("<ul>"); list_open = True
+            elif not is_li and list_open:
+                out.append("</ul>"); list_open = False
+            out.append(h)
+            continue
+        if list_open:
+            out.append("</ul>"); list_open = False
+        table = el.get("table")
+        if table:
+            out.append("<table>")
+            for row in table.get("tableRows", []):
+                out.append("<tr>")
+                for cell in row.get("tableCells", []):
+                    out.append("<td>" + _structural_html(cell.get("content")) + "</td>")
+                out.append("</tr>")
+            out.append("</table>")
+            continue
+        toc = el.get("tableOfContents")
+        if toc:
+            out.append(_structural_html(toc.get("content")))
+    if list_open:
+        out.append("</ul>")
+    return "\n".join(x for x in out if x)
+
+
+def _tab_html(tab) -> str:
+    body = (tab.get("documentTab", {}) or {}).get("body", {}) or {}
+    return _structural_html(body.get("content"))
 
 
 def _tab_id_match(api_id: str, want: str) -> bool:
@@ -153,12 +231,14 @@ def fetch_gdoc_via_api(doc_id, api_key, tab_id=None, prefer_title=None):
             tab = _find_tab_by_id(tabs, tab_id)
         if tab is not None:
             tid = (tab.get("tabProperties", {}) or {}).get("tabId", "")
-            return _tab_body_text(tab), tid
+            return _tab_html(tab), tid
         if prefer_title or tab_id:
             raise TabNotFound(prefer_title or tab_id)
-        return _tidy(_walk_tabs(tabs)), ""
+        return _structural_html(
+            [c for t in tabs for c in
+             ((t.get("documentTab", {}) or {}).get("body", {}) or {}).get("content", [])]), ""
 
-    return _tidy(_walk_structural((data.get("body", {}) or {}).get("content"))), ""
+    return _structural_html((data.get("body", {}) or {}).get("content")), ""
 
 
 def _tidy(text: str) -> str:
