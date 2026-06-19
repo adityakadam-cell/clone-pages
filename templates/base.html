@@ -17,7 +17,7 @@
     <span class="step
       {{ 'active' if a == n else '' }}
       {{ 'done' if ('agent' ~ a) in done_keys else '' }}">
-      <b>{{ a }}</b> {{ LABELS[a] }}
+      {{ LABELS[a] }}
     </span>
   {% endfor %}
 </nav>
