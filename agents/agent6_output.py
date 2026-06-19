@@ -1,19 +1,23 @@
 """
-Agent 6 — Output & download.
+Agent 6 — Output & download.  TEMPLATE-FILL builder ("self thinker").
 
-Reference HTML = design SHELL; the Doc content is injected into it:
-  * banner <h1> subject -> product title (everywhere);
-  * the design's MAIN content COLUMN (any layout: <article>/<main>/largest
-    block) is replaced with the Doc's sections, re-styled with the design's
-    content classes (.content-section/.section-title/.section-text/.data-table);
-  * SPECIAL sections are rebuilt into the design's own components when detected:
-      - "FAQ"             -> .faq-item / .faq-q / .faq-a accordion (+ toggle JS);
-      - "...Applications" -> .card-app-card grid;
-      - "Types/Forms..."  -> .form-card grid;
-  * intro region (.*short-description / lead / intro) gets the Doc's lead-in;
-  * header, nav, footer and sidebar are ALWAYS preserved; any other body
-    section the Doc has no content for is removed (fully automatic).
-Inline images -> placeholder; broken images swap to it.
+The reference page is kept 100% intact (header, nav, banner, badges, featured
+image, the "page consists of" list, sidebar, Export Worldwide, Shipping,
+certifications, CTAs, footer). Only what changes per product is swapped in:
+
+  1. the <h1> and every "Stainless Steel Pipe(s)" mention -> the new product
+     name (chrome menus / sidebar / footer are left alone);
+  2. the .pbmit-short-description intro paragraphs -> the Doc's lead-in;
+  3. each .content-section the Doc actually covers (Specifications, Price,
+     Grades, Comparison, FAQ, ...) has ONLY its body replaced with the Doc's
+     matching section, re-styled with the design's own classes. The heading,
+     divider and section wrapper are preserved.
+
+Standard template furniture the Doc has no content for (Types image cards,
+Applications icon cards, Shipping panel, Export Worldwide tabs, certifications,
+CTA bands) is kept exactly as in the design.  Doc sections with no slot in the
+template (e.g. Chemical Composition, Mechanical Properties) are appended as new
+.content-sections in the same design style, just before the FAQ.
 """
 import re
 import zipfile
@@ -64,6 +68,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
+# Topics that are standard furniture across every page -> keep the design's
+# version, never overwrite from the Doc and never append the Doc's copy.
+FURNITURE = {"types", "applications", "shipping", "export"}
+
 
 def _design(state):
     return state.get("agent2", {}) or {}
@@ -96,71 +104,15 @@ def _find_cls(root, pattern):
     return root.find(class_=re.compile(pattern)) if root else None
 
 
-def _detect_vocab(scope):
-    v = {"section": "", "title": "", "h3": "", "text": "",
-         "table": "", "table_wrap": "", "divider": ""}
-    if scope is None:
-        return v
-    h2 = scope.find("h2")
-    if h2:
-        v["title"] = _cls(h2)
-        anc = h2.find_parent(lambda t: t.name in ("section", "div") and t.get("class"))
-        if anc:
-            v["section"] = _cls(anc)
-        sib = h2.find_next_sibling()
-        if sib and getattr(sib, "name", None) == "div" and "divider" in _cls(sib):
-            v["divider"] = str(sib)
-    h3 = scope.find("h3")
-    if h3:
-        v["h3"] = _cls(h3)
-    p = scope.find("p", class_=True)
-    if p:
-        v["text"] = _cls(p)
-    tbl = scope.find("table")
-    if tbl:
-        v["table"] = _cls(tbl)
-        par = tbl.find_parent("div")
-        if par and par.get("class"):
-            v["table_wrap"] = _cls(par)
-    return v
-
-
-def _detect_special(root):
-    sp = {"faq": None, "app": None, "form": None}
-    item = _find_cls(root, r"\bfaq-item\b")
-    if item:
-        q = _find_cls(item, r"faq-q")
-        a = _find_cls(item, r"faq-a")
-        icon = _find_cls(item, r"faq-icon")
-        sp["faq"] = {"item": _cls(item), "q": _cls(q) if q else "faq-q",
-                     "a": _cls(a) if a else "faq-a",
-                     "icon": _cls(icon) if icon else "faq-icon",
-                     "onclick": (q.get("onclick") if q else "") or "toggleFaq(this)",
-                     "icon_txt": (icon.get_text() if icon else "+") or "+"}
-    card = _find_cls(root, r"card-app-card")
-    if card:
-        grid = card.find_parent(class_=re.compile(r"card-app-grid"))
-        sp["app"] = {"grid": _cls(grid) if grid else "card-app-grid",
-                     "card": _cls(card),
-                     "top": _cls(_find_cls(card, r"card-app-top") or card) or "card-app-top",
-                     "icon": _cls(_find_cls(card, r"card-app-icon")) or "card-app-icon",
-                     "icon_txt": (_find_cls(card, r"card-app-icon").get_text()
-                                  if _find_cls(card, r"card-app-icon") else "◆"),
-                     "title": _cls(_find_cls(card, r"card-app-title")) or "card-app-title",
-                     "text": _cls(_find_cls(card, r"card-app-text")) or "card-app-text"}
-    fcard = _find_cls(root, r"\bform-card\b")
-    if fcard:
-        grid = fcard.find_parent(class_=re.compile(r"form-cards-grid"))
-        sp["form"] = {"grid": _cls(grid) if grid else "row g-4 form-cards-grid",
-                      "col": "col-md-4", "card": _cls(fcard),
-                      "media": _cls(_find_cls(fcard, r"form-card-media")) or "form-card-media",
-                      "body": _cls(_find_cls(fcard, r"form-card-body")) or "form-card-body",
-                      "title": _cls(_find_cls(fcard, r"form-card-title")) or "form-card-title"}
-    return sp
-
-
 def _ca(name):
     return f' class="{name}"' if name else ""
+
+
+def _set_inner(el, html):
+    el.clear()
+    frag = BeautifulSoup(html, "lxml")
+    for n in list((frag.body or frag).children):
+        el.append(n)
 
 
 def _doc_nodes(html):
@@ -168,15 +120,6 @@ def _doc_nodes(html):
     root = frag.body or frag
     return [n for n in root.children
             if getattr(n, "name", None) or (isinstance(n, str) and n.strip())]
-
-
-def _style_table(node, v):
-    t = str(node)
-    if v["table"]:
-        t = re.sub(r"<table\b[^>]*>", f'<table class="{v["table"]}">', t, count=1)
-    if v["table_wrap"]:
-        t = f'<div class="{v["table_wrap"]}">{t}</div>'
-    return t
 
 
 def _heading_level(name):
@@ -194,7 +137,7 @@ def _section_level(nodes):
 
 
 def _pairs(nodes):
-    """Pair each heading with the paragraphs that follow it -> [(title, body_html)]."""
+    """Pair each heading with following paragraphs -> [(title_html, body_html)]."""
     out, title, body = [], None, []
     for n in nodes:
         if _heading_level(getattr(n, "name", "")):
@@ -208,126 +151,295 @@ def _pairs(nodes):
     return out
 
 
-def _render_faq(nodes, faq):
-    items = []
-    for q, a in _pairs(nodes):
-        items.append(
-            f'<div class="{faq["item"]}"><div class="{faq["q"]}" onclick="{faq["onclick"]}">'
-            f'{q}<span class="{faq["icon"]}">{faq["icon_txt"]}</span></div>'
-            f'<div class="{faq["a"]}">{a}</div></div>')
-    return "".join(items)
-
-
-def _render_app_cards(nodes, app):
-    cards = []
-    for title, body in _pairs(nodes):
-        txt = re.sub(r"</?p>", " ", body).strip()
-        cards.append(
-            f'<article class="{app["card"]}"><div class="{app["top"]}">'
-            f'<span class="{app["icon"]}">{app["icon_txt"]}</span>'
-            f'<h3 class="{app["title"]}">{title}</h3></div>'
-            f'<p class="{app["text"]}">{txt}</p></article>')
-    return f'<div class="{app["grid"]}">{"".join(cards)}</div>' if cards else ""
-
-
-def _render_form_cards(nodes, form):
-    titles = []
-    for n in nodes:
-        if _heading_level(getattr(n, "name", "")):
-            titles.append(n.decode_contents())
-        elif getattr(n, "name", None) in ("ul", "ol"):
-            titles += [li.decode_contents() for li in n.find_all("li")]
-    cards = [
-        f'<div class="{form["col"]}"><div class="{form["card"]}">'
-        f'<div class="{form["media"]}">{PLACEHOLDER_IMG}</div>'
-        f'<div class="{form["body"]}"><h3 class="{form["title"]}">{t}</h3></div></div></div>'
-        for t in titles]
-    return f'<div class="{form["grid"]}">{"".join(cards)}</div>' if cards else ""
-
-
-def _render_body(nodes, v):
-    out = []
-    for n in nodes:
-        nm = getattr(n, "name", None)
-        if _heading_level(nm):
-            out.append(f'<h3{_ca(v["h3"] or v["title"])}>{n.decode_contents()}</h3>')
-        elif nm == "table":
-            out.append(_style_table(n, v))
-        elif nm == "p":
-            out.append(f'<p{_ca(v["text"])}>{n.decode_contents()}</p>')
-        elif nm:
-            out.append(str(n))
-    return "".join(out)
-
-
-def _style_sections(nodes, v, special):
+# ---------------------------------------------------------------------- #
+# Doc -> sections
+# ---------------------------------------------------------------------- #
+def _section_groups(nodes):
+    """Group nodes at their shallowest repeated heading level ->
+    (lead_nodes, [ {title, ttext, nodes}, ... ])."""
     sec_lvl = _section_level(nodes)
-    groups, cur = [], {"title": None, "ttext": "", "nodes": []}
+    lead, groups, cur = [], [], None
     for n in nodes:
         lvl = _heading_level(getattr(n, "name", ""))
         if lvl and lvl <= sec_lvl:
-            if cur["title"] is not None or cur["nodes"]:
+            if cur is not None:
                 groups.append(cur)
             cur = {"title": n.decode_contents(),
-                   "ttext": n.get_text(" ", strip=True).lower(), "nodes": []}
+                   "ttext": n.get_text(" ", strip=True), "nodes": []}
+        elif cur is None:
+            lead.append(n)
         else:
             cur["nodes"].append(n)
-    if cur["title"] is not None or cur["nodes"]:
+    if cur is not None:
         groups.append(cur)
-
-    html = []
-    for g in groups:
-        t = g["ttext"]
-        if special.get("faq") and ("faq" in t or "frequently asked" in t):
-            body = _render_faq(g["nodes"], special["faq"]) or _render_body(g["nodes"], v)
-        elif special.get("app") and "application" in t:
-            body = _render_app_cards(g["nodes"], special["app"]) or _render_body(g["nodes"], v)
-        elif special.get("form") and re.search(r"\b(types?|forms?|shapes?)\b", t):
-            body = _render_form_cards(g["nodes"], special["form"]) or _render_body(g["nodes"], v)
-        else:
-            body = _render_body(g["nodes"], v)
-        inner = ""
-        if g["title"] is not None:
-            inner += f'<h2{_ca(v["title"])}>{g["title"]}</h2>{v["divider"]}'
-        inner += body
-        html.append(f'<section{_ca(v["section"])}>{inner}</section>')
-    return "".join(html)
+    return lead, groups
 
 
-def _style_intro(nodes, intro_cls):
+def _doc_sections(html):
+    """Split Doc HTML into (intro_nodes, [section groups]).
+
+    The Doc usually opens with a TITLE heading (the product name) whose body is
+    the intro and which may nest the first real sub-sections under it. Unwrap
+    that title: its lead paragraphs feed the intro, its nested sub-sections are
+    re-grouped so they match template slots (e.g. Sizes) instead of leaking in
+    as one stray block."""
+    intro, groups = _section_groups(_doc_nodes(html))
+    if groups and _topic(groups[0]["ttext"]) is None:
+        first = groups.pop(0)
+        sub_lead, sub_groups = _section_groups(first["nodes"])
+        intro = intro + sub_lead
+        groups = sub_groups + groups
+    return intro, groups
+
+
+def _topic(text):
+    t = (text or "").lower()
+    if "frequently asked" in t or re.search(r"\bfaqs?\b", t):
+        return "faq"
+    if "export" in t and ("worldwide" in t or "countr" in t or "global" in t):
+        return "export"
+    if "shipping" in t or "packaging" in t or "packing" in t:
+        return "shipping"
+    if "application" in t or "industr" in t:
+        return "applications"
+    if re.search(r"\bvs\b|\bversus\b|comparison|difference", t):
+        return "comparison"
+    if re.search(r"\btypes?\b|\bforms?\b|\bshapes?\b", t):
+        return "types"
+    if "price" in t or "pricing" in t or "cost" in t:
+        return "price"
+    if "chemical" in t or "composition" in t:
+        return "composition"
+    if "mechanical" in t or "physical propert" in t:
+        return "mechanical"
+    if "specification" in t or re.search(r"\bspecs?\b", t):
+        return "specs"
+    if "size" in t or "dimension" in t:
+        return "sizes"
+    if "grade" in t:
+        return "grades"
+    return None
+
+
+# ---------------------------------------------------------------------- #
+# Rendering with the design's classes
+# ---------------------------------------------------------------------- #
+def _style_table(node):
+    t = re.sub(r"<table\b[^>]*>", '<table class="data-table">', str(node), count=1)
+    return f'<div class="data-table-wrap">{t}</div>'
+
+
+def _render_section_body(nodes):
     out = []
     for n in nodes:
         nm = getattr(n, "name", None)
-        if nm == "p":
-            out.append(f'<div{_ca(intro_cls)}>{n.decode_contents()}</div>')
-        elif nm in ("ul", "ol"):
-            out.append(str(n))
-        elif nm:
+        if nm is None:
+            continue
+        if _heading_level(nm):
+            out.append(f'<h3 class="section-title section-title-h3">{n.decode_contents()}</h3>')
+        elif nm == "table":
+            out.append(_style_table(n))
+        elif nm == "p":
+            out.append(f'<p class="section-text">{n.decode_contents()}</p>')
+        else:
             out.append(str(n))
     return "".join(out)
 
 
-def _split_intro(nodes):
-    sec_lvl = _section_level(nodes)
-    for i, n in enumerate(nodes):
-        if _heading_level(getattr(n, "name", "")) and _heading_level(n.name) <= sec_lvl:
-            return nodes[:i], nodes[i:]
-    return nodes, []
+def _faq_vocab(root):
+    item = _find_cls(root, r"\bfaq-item\b")
+    if not item:
+        return {"item": "faq-item", "q": "faq-q", "a": "faq-a",
+                "icon": "faq-icon", "onclick": "toggleFaq(this)", "icon_txt": "+"}
+    q = _find_cls(item, r"faq-q")
+    a = _find_cls(item, r"faq-a")
+    icon = _find_cls(item, r"faq-icon")
+    return {"item": _cls(item), "q": _cls(q) if q else "faq-q",
+            "a": _cls(a) if a else "faq-a", "icon": _cls(icon) if icon else "faq-icon",
+            "onclick": (q.get("onclick") if q else "") or "toggleFaq(this)",
+            "icon_txt": (icon.get_text() if icon else "+") or "+"}
 
 
-def _set_inner(el, html):
-    el.clear()
+def _render_faq(nodes, fq):
+    out = []
+    for q, a in _pairs(nodes):
+        out.append(
+            f'<div class="{fq["item"]}"><div class="{fq["q"]}" onclick="{fq["onclick"]}">'
+            f'{q}<span class="{fq["icon"]}">{fq["icon_txt"]}</span></div>'
+            f'<div class="{fq["a"]}">{a}</div></div>')
+    return "".join(out)
+
+
+def _title_html(text):
+    text = (text or "").strip()
+    if not text:
+        return ""
+    parts = text.rsplit(" ", 1)
+    if len(parts) == 2:
+        return f"{escape(parts[0])} <span>{escape(parts[1])}</span>"
+    return f"<span>{escape(text)}</span>"
+
+
+# ---------------------------------------------------------------------- #
+# Product rename (skips header / nav / footer / sidebar menus)
+# ---------------------------------------------------------------------- #
+_CHROME_ANCESTOR = re.compile(
+    r"site-header|site-footer|pbmit-footer|navigation|navbar|pbmit-mega|"
+    r"sub-menu|side-nav|toc-sidebar|pbmit-header|widget", re.I)
+
+
+def _in_chrome(tn):
+    p = tn.parent
+    while p is not None and getattr(p, "name", None):
+        if p.name in ("header", "nav", "footer", "aside", "script", "style"):
+            return True
+        if _CHROME_ANCESTOR.search(" ".join(p.get("class") or [])):
+            return True
+        p = p.parent
+    return False
+
+
+def _rename_product(root, ref_title, new_title, h1):
+    if not new_title:
+        return
+    ref_core = re.sub(r"s$", "", (ref_title or "").strip())
+    if ref_core and ref_core.lower() != new_title.lower():
+        ref_plur = ref_core + "s"
+        new_plur = new_title + "s"
+        pat_plur = re.compile(re.escape(ref_plur), re.I)
+        pat_sing = re.compile(re.escape(ref_core), re.I)
+        for tn in list(root.find_all(string=True)):
+            s = str(tn)
+            if ref_core.lower() not in s.lower():
+                continue
+            if _in_chrome(tn):
+                continue
+            s2 = pat_sing.sub(new_title, pat_plur.sub(new_plur, s))
+            if s2 != s:
+                tn.replace_with(s2)
+    if h1 is not None:
+        _set_inner(h1, _title_html(new_title))
+
+
+# ---------------------------------------------------------------------- #
+# Intro + section swapping
+# ---------------------------------------------------------------------- #
+def _swap_intro(root, intro_nodes):
+    descs = root.find_all(class_="pbmit-short-description")
+    if not descs or not intro_nodes:
+        return
+    keep = None
+    for d in descs:
+        if "page consists" in d.get_text(" ", strip=True).lower():
+            keep = d
+            break
+    html = ""
+    for n in intro_nodes:
+        nm = getattr(n, "name", None)
+        if nm == "p":
+            html += f'<div class="pbmit-short-description">{n.decode_contents()}</div>'
+        elif nm in ("ul", "ol"):
+            html += str(n)
+    if not html:
+        return
     frag = BeautifulSoup(html, "lxml")
+    new_nodes = list((frag.body or frag).children)
+    anchor = keep or descs[0]
+    for nn in new_nodes:
+        anchor.insert_before(nn)
+    for d in descs:
+        if d is not keep:
+            d.decompose()
+
+
+def _replace_section_body(sec, body_html):
+    """Keep the section's heading + divider; replace everything else."""
+    title = sec.find(["h2", "h3"], class_=re.compile("section-title"))
+    divider = sec.find("div", class_=re.compile("section-divider"))
+    keep_ids = {id(x) for x in (title, divider) if x is not None}
+    for child in list(sec.children):
+        if getattr(child, "name", None) is None:
+            if not str(child).strip():
+                child.extract()
+            continue
+        if id(child) not in keep_ids:
+            child.decompose()
+    frag = BeautifulSoup(body_html, "lxml")
     for n in list((frag.body or frag).children):
-        el.append(n)
+        sec.append(n)
 
 
+def _content_sections(article):
+    return [s for s in article.find_all("section")
+            if "content-section" in (s.get("class") or [])]
+
+
+def _swap_sections(root, article, doc_groups, faq_vocab):
+    used = set()
+    by_topic = {}
+    for i, g in enumerate(doc_groups):
+        by_topic.setdefault(_topic(g["ttext"]), []).append(i)
+
+    for sec in _content_sections(article):
+        h = sec.find(["h2", "h3"], class_=re.compile("section-title"))
+        if h is None:
+            continue                                  # CTA bands etc. -> keep
+        topic = _topic(h.get_text(" ", strip=True))
+        if topic is None or topic in FURNITURE:
+            continue                                  # furniture / unknown -> keep
+        free = [i for i in by_topic.get(topic, []) if i not in used]
+        if not free:
+            continue                                  # no Doc content -> keep template
+        gi = free[0]
+        used.add(gi)
+        nodes = doc_groups[gi]["nodes"]
+        body = (_render_faq(nodes, faq_vocab) if topic == "faq"
+                else _render_section_body(nodes))
+        if body.strip():
+            _replace_section_body(sec, body)
+
+    # Append Doc sections with no template slot (real content, not furniture).
+    extra = ""
+    for i, g in enumerate(doc_groups):
+        if i in used:
+            continue
+        tp = _topic(g["ttext"])
+        if tp in FURNITURE:
+            continue
+        body = _render_section_body(g["nodes"])
+        if not body.strip():
+            continue
+        extra += (f'<section class="content-section">'
+                  f'<h2 class="section-title">{_title_html(g["ttext"])}</h2>'
+                  f'<div class="section-divider"></div>{body}</section>')
+    if extra:
+        frag = BeautifulSoup(extra, "lxml")
+        new_secs = list((frag.body or frag).children)
+        faq_sec = next((s for s in _content_sections(article)
+                        if s.find(["h2", "h3"], class_=re.compile("section-title"))
+                        and _topic(s.find(["h2", "h3"],
+                                   class_=re.compile("section-title"))
+                                   .get_text(" ", strip=True)) == "faq"), None)
+        ctas = [s for s in article.find_all("section")
+                if "cta-section" in (s.get("class") or [])]
+        anchor = faq_sec or (ctas[-1] if ctas else None)
+        if anchor is not None:
+            for ns in new_secs:
+                anchor.insert_before(ns)
+        else:
+            for ns in new_secs:
+                article.append(ns)
+
+
+# ---------------------------------------------------------------------- #
+# Fallback main-region finder (designs without <article class="main-content">)
+# ---------------------------------------------------------------------- #
 def _content_fallback(root, h1):
     best, best_len = None, 0
-    for el in root.find_all(["main", "section", "div"]):
+    for el in root.find_all(["main", "article", "section", "div"]):
         if el.name in ("nav", "header", "footer"):
             continue
-        if el.find(["nav", "header", "footer", "aside"]):
+        if el.find(["nav", "header", "footer"]):
             continue
         if h1 and (el is h1 or h1 in el.descendants):
             continue
@@ -338,131 +450,51 @@ def _content_fallback(root, h1):
 
 
 def _main_region(root, h1):
-    """Find the design's main content COLUMN for ANY layout. Trust the
-    semantic landmarks first (a sparse template may have little placeholder
-    text, so length is NOT required for <article>/<main>):
-      1. <article> that holds real content and isn't inside chrome;
-      2. <main>, narrowed away from any sidebar/aside it contains;
-      3. largest non-chrome text block (fallback heuristic)."""
-    art = root.find("article")
-    if (art is not None
-            and not art.find_parent(["header", "nav", "footer"])
-            and art.find(["h1", "h2", "h3", "h4", "p", "table", "ul", "ol"])):
+    art = root.find("article", class_="main-content")
+    if art is not None:
         return art
-
+    art = root.find("article")
+    if art is not None and art.find("section"):
+        return art
     main = root.find("main")
-    if main is not None and not main.find_parent(["header", "nav", "footer"]):
-        aside = main.find("aside") or main.find(class_=re.compile(r"sidebar|side-bar"))
-        if aside is not None:
-            best, best_len = None, 0
-            for el in main.find_all(["article", "section", "div"]):
-                if el is aside or aside in el.descendants:
-                    continue
-                if el.find(["aside"]) or el.find(class_=re.compile(r"sidebar|side-bar")):
-                    continue
-                t = len(el.get_text(" ", strip=True))
-                if t > best_len:
-                    best, best_len = el, t
-            if best is not None and best_len > 0:
-                return best
+    if main is not None and main.find("section"):
         return main
-
     return _content_fallback(root, h1)
 
 
-_CHROME_RE = re.compile(
-    r"(header|nav(bar)?|footer|sidebar|side-bar|aside|widget|rail|breadcrumb|"
-    r"banner|hero|menu|topbar|top-bar|cookie|newsletter|subscribe|enquiry|"
-    r"quote|contact|logo|search)", re.I)
-
-
-def _is_chrome(el):
-    """True for header/nav/footer/sidebar/banner-type blocks that must survive
-    regardless of the Doc content."""
-    if getattr(el, "name", None) in ("header", "nav", "footer", "aside"):
-        return True
-    if el.find_parent(["header", "nav", "footer", "aside"]):
-        return True
-    if _CHROME_RE.search(" ".join(el.get("class") or [])):
-        return True
-    if el.find(["header", "nav", "footer"]):
-        return True
-    return False
-
-
-def _strip_unmatched(root, main_el):
-    """Remove body sections not backed by Doc content. All Doc content lives
-    inside main_el, so any sibling block along main_el's ancestor chain that
-    isn't chrome (header/nav/footer/sidebar/banner) is design-only -> drop it.
-    Header, footer, nav and sidebar are always kept."""
-    if main_el is None:
-        return
-    node, guard = main_el, 0
-    while node is not None and getattr(node, "name", None) != "body" and guard < 40:
-        guard += 1
-        parent = node.parent
-        if parent is None:
-            break
-        for sib in list(node.find_next_siblings()) + list(node.find_previous_siblings()):
-            if getattr(sib, "name", None) is None:
-                continue
-            if sib is main_el or main_el in sib.descendants:
-                continue
-            if _is_chrome(sib):
-                continue
-            sib.decompose()
-        node = parent
-
-
+# ---------------------------------------------------------------------- #
+# Orchestration
+# ---------------------------------------------------------------------- #
 def _inject(design, page):
     template_html = design.get("template_html", "") or ""
     soup = BeautifulSoup(template_html, "lxml")
     root = soup.body or soup
     new_title = (page.get("product") or page.get("meta_title") or "").strip()
 
-    special = _detect_special(root)
-
     h1 = root.find("h1")
     ref_title = h1.get_text(" ", strip=True) if h1 else ""
-    if h1 and new_title:
-        h1.clear()
-        h1.append(NavigableString(new_title))
-    if ref_title and new_title and ref_title != new_title:
-        for tn in list(root.find_all(string=True)):
-            if ref_title in tn:
-                tn.replace_with(tn.replace(ref_title, new_title))
+    _rename_product(root, ref_title, new_title, h1)
 
     content_html = page.get("content", "") or ""
     content_html = re.sub(r"^\s*<h1>.*?</h1>", "", content_html, count=1, flags=re.S | re.I)
-    nodes = _doc_nodes(content_html)
-    intro_nodes, section_nodes = _split_intro(nodes)
+    intro_nodes, doc_groups = _doc_sections(content_html)
+
+    _swap_intro(root, intro_nodes)
 
     article = _main_region(root, h1)
-    vocab = _detect_vocab(article)
-
     if article is not None:
-        intro_el = root.find(
-            class_=re.compile(r"short-description|lead-?in|intro|excerpt|summary"))
-        holder = intro_el.parent if intro_el else None
-        # Only split the intro into its own region when that region is SEPARATE
-        # from the main content column (otherwise we'd overwrite what we inject).
-        sep_intro = (bool(section_nodes) and holder is not None
-                     and holder is not article
-                     and article not in holder.descendants
-                     and holder not in article.descendants)
-        if sep_intro:
-            _set_inner(article, _style_sections(section_nodes, vocab, special) or "<p></p>")
-            intro_cls = _cls(intro_el)
-            _set_inner(holder, _style_intro(intro_nodes, intro_cls)
-                       or f'<div{_ca(intro_cls)}></div>')
+        faq_vocab = _faq_vocab(root)
+        if _content_sections(article):
+            _swap_sections(root, article, doc_groups, faq_vocab)
         else:
-            _set_inner(article, _style_sections(nodes, vocab, special) or "<p></p>")
-        _strip_unmatched(root, article)
-    else:
-        sec = soup.new_tag("section")
-        sec["class"] = "api-agent-content"
-        _set_inner(sec, _style_sections(nodes, vocab, special))
-        root.append(sec)
+            # No design sections to fill -> drop the Doc in, styled.
+            body = "".join(
+                f'<section class="content-section">'
+                f'<h2 class="section-title">{_title_html(g["ttext"])}</h2>'
+                f'<div class="section-divider"></div>'
+                f'{_render_section_body(g["nodes"])}</section>'
+                for g in doc_groups)
+            _set_inner(article, body or "<p></p>")
 
     body_html = root.decode_contents()
     return body_html.replace(IMAGE_MARK, PLACEHOLDER_IMG)
