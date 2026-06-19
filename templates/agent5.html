@@ -2,22 +2,46 @@
 {% block title %}Agent 5 — Sync{% endblock %}
 {% block body %}
   <h2>Agent 5 — Recheck &amp; sync</h2>
-  <p class="hint">Auto-builds any missing field so every page is complete and on-design.</p>
+  <p class="hint">This is what will be implemented into each page — page name, the
+  content Doc it was fetched from, and the meta that will be applied. Anything
+  missing is auto-built (shown in orange).</p>
   <div id="loader" class="loader"><div class="spinner"></div><span>Syncing pages…</span></div>
   <div id="syncResult" class="board"></div>
-  <div class="actions" id="nav5" style="display:none">
+  <div id="syncList" class="sync-list"></div>
+  <div class="actions sticky" id="nav5" style="display:none">
     <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
     <a class="btn primary" href="{{ url_for('agent', n=nxt) }}">Preview &amp; approve &rarr;</a>
   </div>
 {% endblock %}
 {% block scripts %}
 <script>
-fetch("{{ url_for('api_agent5') }}", {method:"POST"})
- .then(r => r.json()).then(r => {
-   document.getElementById("loader").style.display = "none";
-   document.getElementById("syncResult").innerHTML =
-     `<div class="req ok"><span class="tag">Synced</span> ${r.message}</div>`;
-   document.getElementById("nav5").style.display = "flex";
- });
+function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+function field(label, val, auto){
+  const cls = auto ? "sv-val auto" : "sv-val";
+  const tag = auto ? ' <span class="auto-tag">auto-built</span>' : '';
+  return `<div class="sv-row"><span class="sv-key">${label}</span>
+          <span class="${cls}">${val || '<i>(empty)</i>'}${tag}</span></div>`;
+}
+fetch("{{ url_for('api_agent5') }}", {method:"POST"}).then(r=>r.json()).then(r=>{
+  document.getElementById("loader").style.display="none";
+  document.getElementById("syncResult").innerHTML =
+    `<div class="req ok"><span class="tag">Synced</span> ${r.message}</div>`;
+  const rows = r.data.rows || [];
+  document.getElementById("syncList").innerHTML = rows.map(p => {
+    const a = p.autofilled || [];
+    const doc = p.doc_url
+      ? `<a class="sv-link" href="${p.doc_url}" target="_blank" rel="noopener">${esc(p.doc_url)}</a>`
+      : '<i>(no Doc linked)</i>';
+    return `<div class="sync-card">
+      <div class="sync-head"><span class="sync-name">${esc(p.product)}</span>
+        <span class="sync-chars">${p.content_chars.toLocaleString()} chars content</span></div>
+      ${field("Content Doc URL", doc, false)}
+      ${field("Page URL", esc(p.page_url), a.includes('page_url'))}
+      ${field("Meta Title", esc(p.meta_title), a.includes('meta_title'))}
+      ${field("Meta Description", esc(p.meta_description), a.includes('meta_description'))}
+    </div>`;
+  }).join("");
+  document.getElementById("nav5").style.display="flex";
+});
 </script>
 {% endblock %}

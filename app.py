@@ -102,7 +102,7 @@ def _persist(resp):
 
 
 FLOW = Config.AGENT_ORDER  # [1, 2, 3, 4, 5, 7, 8, 6]
-LABELS = {1: "URL", 2: "Design", 3: "Content", 4: "Analyze",
+LABELS = {2: "URL & Design", 3: "Content", 4: "Analyze",
           5: "Sync", 7: "Approve", 8: "Verify", 6: "Download"}
 
 
@@ -126,7 +126,7 @@ def inject_nav():
 @app.route("/")
 def home():
     clear_sdata()
-    return redirect(url_for("agent", n=1))
+    return redirect(url_for("agent", n=FLOW[0]))
 
 
 @app.route("/healthz")
@@ -163,7 +163,7 @@ def docs_check():
 @app.route("/restart")
 def restart():
     clear_sdata()
-    return redirect(url_for("agent", n=1))
+    return redirect(url_for("agent", n=FLOW[0]))
 
 
 @app.errorhandler(413)
@@ -175,7 +175,7 @@ def too_large(_):
 @app.route("/agent/<int:n>")
 def agent(n):
     if n not in FLOW:
-        return redirect(url_for("agent", n=1))
+        return redirect(url_for("agent", n=FLOW[0]))
     d = sdata()
     ctx = dict(n=n, nxt=_next(n), prv=_prev(n), data=d,
                max_files=Config.MAX_UPLOAD_FILES,
@@ -188,23 +188,19 @@ def agent(n):
     return render_template(f"agent{n}.html", **ctx)
 
 
-@app.route("/agent/1", methods=["POST"])
-def post_agent1():
-    res = a1.run(request.form.get("url", ""))
-    if not res["ok"]:
-        flash(res["error"], "error")
-        return redirect(url_for("agent", n=1))
-    sdata()["agent1"] = res["data"]
-    return redirect(url_for("agent", n=_next(1)))
-
-
 @app.route("/agent/2", methods=["POST"])
 def post_agent2():
-    res = a2.run(html=request.form.get("html", ""),
-                 base_url=request.form.get("base_url", ""))
+    # Step 1 now collects BOTH the page URL and the design HTML.
+    url = request.form.get("url", "")
+    res1 = a1.run(url)
+    if not res1["ok"]:
+        flash(res1["error"], "error")
+        return redirect(url_for("agent", n=2))
+    res = a2.run(html=request.form.get("html", ""), base_url=url)
     if not res["ok"]:
         flash(res["error"], "error")
         return redirect(url_for("agent", n=2))
+    sdata()["agent1"] = res1["data"]
     sdata()["agent2"] = res["data"]
     flash(res["message"], "ok")
     return redirect(url_for("agent", n=_next(2)))

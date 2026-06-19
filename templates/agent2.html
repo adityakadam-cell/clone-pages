@@ -1,14 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Agent 2 — Design{% endblock %}
+{% block title %}URL &amp; Design{% endblock %}
 {% block body %}
-  <h2>Agent 2 — Design capture</h2>
-  <p class="hint">Paste the page HTML. We extract its CSS &amp; JS so cloned pages match the design.</p>
+  <h2>Step 1 — Page URL &amp; Design</h2>
+  <p class="hint">Enter the reference page URL and paste its HTML. We extract the
+  CSS &amp; JS so every cloned page matches the design.</p>
   <form method="post" action="{{ url_for('post_agent2') }}">
-    <input type="url" name="base_url" placeholder="Base URL (optional — resolves relative links)">
-    <textarea name="html" rows="9" placeholder="Paste full page HTML here..." required></textarea>
+    <label class="fld-label">Page URL (the live/reference page to clone)</label>
+    <input type="url" name="url" value="{{ data.get('agent1', {}).get('url', '') }}"
+           placeholder="https://www.example.com/product-page.html" required>
+
+    <label class="fld-label">Page HTML (paste the full source)</label>
+    <textarea name="html" rows="10" placeholder="Paste full page HTML here..." required></textarea>
+
     <div class="actions">
-      <a class="btn ghost" href="{{ url_for('agent', n=prv) }}">&larr; Back</a>
-      <button class="btn primary" type="submit">Capture design &rarr;</button>
+      <a class="btn ghost" href="{{ url_for('restart') }}">Reset</a>
+      <button class="btn primary" type="submit">Capture &amp; continue &rarr;</button>
     </div>
   </form>
 {% endblock %}

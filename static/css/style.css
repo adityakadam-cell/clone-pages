@@ -141,3 +141,20 @@ a.dl:hover{text-decoration:underline}
 .modal-row{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
   padding:7px 10px;font-size:13px;color:var(--ok)}
 .modal-actions{display:flex;justify-content:flex-end;margin-top:6px}
+
+.fld-label{display:block;font-size:12px;color:var(--muted);margin:4px 0 4px}
+
+/* ---- Agent 5: sync detail cards ---- */
+.sync-list{display:grid;gap:10px;margin:14px 0}
+.sync-card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px}
+.sync-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.sync-name{font-size:15px;font-weight:700}
+.sync-chars{margin-left:auto;font-size:12px;color:var(--muted)}
+.sv-row{display:flex;gap:10px;font-size:13px;padding:3px 0;align-items:baseline}
+.sv-key{min-width:150px;color:var(--muted);font-weight:600}
+.sv-val{word-break:break-word}
+.sv-val.auto{color:var(--warn)}
+.sv-link{color:var(--primary2);word-break:break-all;text-decoration:none}
+.sv-link:hover{text-decoration:underline}
+.auto-tag{font-size:10px;background:var(--warn);color:#0b1220;padding:1px 6px;border-radius:999px;margin-left:6px}
+@media (max-width:560px){ .sv-key{min-width:0} .sv-row{flex-wrap:wrap} }

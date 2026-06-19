@@ -29,7 +29,7 @@ class Config:
     MAX_CONTENT_LENGTH = MAX_UPLOAD_MB * 1024 * 1024 * MAX_UPLOAD_FILES
 
     # Ordered flow. Agent 7 (preview/approve) and 8 (verify) run before download.
-    AGENT_ORDER = [1, 2, 3, 4, 5, 7, 8, 6]
+    AGENT_ORDER = [2, 3, 4, 5, 7, 8, 6]
 
     # Max pages that can be approved & built in one round.
     MAX_BUILD_PAGES = int(os.environ.get("MAX_BUILD_PAGES", 5))

@@ -104,6 +104,7 @@ def run_sheet(sheet_url, api_key: str = ""):
             "product": r.get("product", ""),
             "slug": slugify(r.get("product", "")),
             "content": content,
+            "doc_url": (r.get("doc_link") or ""),
             "page_url": (r.get("page_url_link") or r.get("page_url", "")),
             "meta_title": r.get("meta_title", ""),
             "meta_description": r.get("meta_description", ""),
