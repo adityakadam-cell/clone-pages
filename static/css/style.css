@@ -158,3 +158,10 @@ a.dl:hover{text-decoration:underline}
 .sv-link:hover{text-decoration:underline}
 .auto-tag{font-size:10px;background:var(--warn);color:#0b1220;padding:1px 6px;border-radius:999px;margin-left:6px}
 @media (max-width:560px){ .sv-key{min-width:0} .sv-row{flex-wrap:wrap} }
+
+/* one-click auto-build bar */
+.auto-bar{display:flex;align-items:center;gap:14px;margin:14px 0 4px;flex-wrap:wrap}
+.btn.auto{background:linear-gradient(90deg,#7c5cff,#5b8bff);color:#fff;border:none;
+  padding:10px 18px;border-radius:10px;font-weight:600;cursor:pointer}
+.btn.auto:hover{filter:brightness(1.08)}
+.auto-hint{color:#8aa0c0;font-size:13px}

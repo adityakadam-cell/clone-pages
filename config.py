@@ -38,6 +38,16 @@ class Config:
     # insensitive). The chip's tab id is only a fallback. Set "" to disable.
     DOC_TAB_TITLE = os.environ.get("DOC_TAB_TITLE", "Final").strip()
 
+    # ---- AI builder (Gemini) ----
+    # Wire a language model into the page builder so it adapts the Doc content
+    # into the design intelligently. Uses GEMINI_API_KEY, falling back to the
+    # existing GOOGLE_API_KEY. Enable the "Generative Language API" on that key.
+    GEMINI_API_KEY = (os.environ.get("GEMINI_API_KEY") or "").strip()
+    AI_MODEL = (os.environ.get("AI_MODEL") or "gemini-2.0-flash").strip()
+    AI_ENABLED = (os.environ.get("AI_ENABLED", "1").strip()
+                  not in ("0", "false", "False", ""))
+    AI_TIMEOUT = int(os.environ.get("AI_TIMEOUT", 60))
+
 
 def init_dirs():
     Config.UPLOAD_DIR.mkdir(exist_ok=True)

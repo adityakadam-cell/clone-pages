@@ -29,6 +29,10 @@ from bs4 import BeautifulSoup, NavigableString
 from config import Config
 from core.utils import ok, fail, slugify
 from core.doc_fetcher import IMAGE_MARK
+from core import ai_writer as _AI
+
+import logging
+log = logging.getLogger("api-agent.agent6")
 
 PLACEHOLDER_SRC = (
     "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmci"
@@ -477,27 +481,242 @@ def _inject(design, page):
 
     content_html = page.get("content", "") or ""
     content_html = re.sub(r"^\s*<h1>.*?</h1>", "", content_html, count=1, flags=re.S | re.I)
-    intro_nodes, doc_groups = _doc_sections(content_html)
-
-    _swap_intro(root, intro_nodes)
 
     article = _main_region(root, h1)
     if article is not None:
-        faq_vocab = _faq_vocab(root)
-        if _content_sections(article):
-            _swap_sections(root, article, doc_groups, faq_vocab)
-        else:
-            # No design sections to fill -> drop the Doc in, styled.
-            body = "".join(
-                f'<section class="content-section">'
-                f'<h2 class="section-title">{_title_html(g["ttext"])}</h2>'
-                f'<div class="section-divider"></div>'
-                f'{_render_section_body(g["nodes"])}</section>'
-                for g in doc_groups)
-            _set_inner(article, body or "<p></p>")
+        slots = _design_slots(article) if _content_sections(article) else []
+        used_ai = False
+        if slots and _AI.is_enabled():
+            try:
+                plan = _AI.plan_page(new_title, slots, _doc_to_md(content_html))
+                _apply_plan(root, article, plan)
+                used_ai = True
+                log.info("AI builder filled '%s'", new_title or "page")
+            except Exception as exc:                       # pragma: no cover
+                log.warning("AI builder failed (%s); using rule-based fill", exc)
+        if not used_ai:
+            intro_nodes, doc_groups = _doc_sections(content_html)
+            _swap_intro(root, intro_nodes)
+            if slots:
+                _swap_sections(root, article, doc_groups, _faq_vocab(root))
+            else:
+                body = "".join(
+                    f'<section class="content-section">'
+                    f'<h2 class="section-title">{_title_html(g["ttext"])}</h2>'
+                    f'<div class="section-divider"></div>'
+                    f'{_render_section_body(g["nodes"])}</section>'
+                    for g in doc_groups)
+                _set_inner(article, body or "<p></p>")
 
+    _placeholder_images(root)
     body_html = root.decode_contents()
     return body_html.replace(IMAGE_MARK, PLACEHOLDER_IMG)
+
+
+
+# ---------------------------------------------------------------------- #
+# AI builder ("creative thinking")
+# ---------------------------------------------------------------------- #
+def _doc_to_md(html):
+    """Doc HTML -> compact markdown-ish text for the model."""
+    soup = BeautifulSoup(html or "", "lxml")
+    out = []
+    for el in (soup.body or soup).descendants:
+        nm = getattr(el, "name", None)
+        if nm and re.match(r"h[1-6]$", nm):
+            out.append("\n" + "#" * int(nm[1]) + " " + el.get_text(" ", strip=True))
+        elif nm == "p":
+            t = el.get_text(" ", strip=True)
+            if t:
+                out.append(t)
+        elif nm == "li":
+            out.append("- " + el.get_text(" ", strip=True))
+        elif nm == "table":
+            rows = []
+            for tr in el.find_all("tr"):
+                cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
+                if cells:
+                    rows.append(" | ".join(cells))
+            if rows:
+                out.append("\n".join(rows))
+    seen, dedup = set(), []
+    for line in out:
+        key = line.strip()
+        if key and key in seen:
+            continue
+        seen.add(key)
+        dedup.append(line)
+    return "\n".join(dedup).strip()
+
+
+def _slot_kind(sec):
+    if sec.find(class_=re.compile(r"\bfaq-item\b")):
+        return "faq"
+    if sec.find(class_=re.compile(r"card-app-card|form-card")):
+        return "cards"
+    if sec.find("table"):
+        return "table"
+    return "text"
+
+
+def _design_slots(article):
+    slots = []
+    for sec in _content_sections(article):
+        h = sec.find(["h2", "h3"], class_=re.compile("section-title"))
+        if h is None:
+            continue
+        heading = h.get_text(" ", strip=True)
+        slots.append({"id": sec.get("id") or heading, "heading": heading,
+                      "kind": _slot_kind(sec), "furniture": _topic(heading) in FURNITURE})
+    return slots
+
+
+_ALLOWED_TAGS = {"p", "h2", "h3", "h4", "h5", "ul", "ol", "li", "table", "thead",
+                 "tbody", "tr", "td", "th", "div", "span", "strong", "em", "b",
+                 "i", "br", "a", "img"}
+
+
+def _sanitize(html):
+    """Keep only safe tags/attrs from an AI fragment (design classes preserved,
+    scripts/styles/handlers removed; FAQ toggle onclick is allowed)."""
+    frag = BeautifulSoup(html or "", "lxml")
+    for t in frag.find_all(["script", "style", "iframe", "link", "meta",
+                            "object", "embed", "form", "input", "button"]):
+        t.decompose()
+    for el in frag.find_all(True):
+        if el.name not in _ALLOWED_TAGS:
+            el.unwrap()
+            continue
+        for a in list(el.attrs):
+            al = a.lower()
+            val = str(el.attrs[a])
+            if al.startswith("on"):
+                if not (al == "onclick" and "togglefaq" in val.lower()):
+                    del el[a]
+            elif al in ("style", "srcset", "onerror", "onload"):
+                del el[a]
+            elif al == "href" and val.strip().lower().startswith("javascript:"):
+                el["href"] = "#"
+    body = frag.body or frag
+    return body.decode_contents()
+
+
+def _find_faq_section(article):
+    for s in _content_sections(article):
+        h = s.find(["h2", "h3"], class_=re.compile("section-title"))
+        if h and _topic(h.get_text(" ", strip=True)) == "faq":
+            return s
+    return None
+
+
+def _swap_intro_html(root, html):
+    descs = root.find_all(class_="pbmit-short-description")
+    if not descs or not html.strip():
+        return
+    keep = None
+    for d in descs:
+        if "page consists" in d.get_text(" ", strip=True).lower():
+            keep = d
+            break
+    frag = BeautifulSoup(html, "lxml")
+    new_nodes = list((frag.body or frag).children)
+    anchor = keep or descs[0]
+    for nn in new_nodes:
+        anchor.insert_before(nn)
+    for d in descs:
+        if d is not keep:
+            d.decompose()
+
+
+def _apply_plan(root, article, plan):
+    intro = plan.get("intro") or []
+    if intro:
+        html = "".join(
+            f'<div class="pbmit-short-description">{_sanitize(p)}</div>'
+            for p in intro if str(p).strip())
+        _swap_intro_html(root, html)
+
+    secs = _content_sections(article)
+    by_id = {s.get("id").lower(): s for s in secs if s.get("id")}
+
+    def find_slot(key):
+        k = (key or "").strip().lower()
+        if k in by_id:
+            return by_id[k]
+        for s in secs:
+            h = s.find(["h2", "h3"], class_=re.compile("section-title"))
+            if not h:
+                continue
+            ht = h.get_text(" ", strip=True).lower()
+            if k and (k in ht or ht in k):
+                return s
+        return None
+
+    for item in plan.get("sections", []):
+        if item.get("action") != "replace" or not item.get("html", "").strip():
+            continue
+        sec = find_slot(item.get("id", ""))
+        if sec is None:
+            continue
+        h = sec.find(["h2", "h3"], class_=re.compile("section-title"))
+        if h is None or _topic(h.get_text(" ", strip=True)) in FURNITURE:
+            continue
+        body = _sanitize(item["html"])
+        if body.strip():
+            _replace_section_body(sec, body)
+
+    extra = ""
+    for e in plan.get("extra", []):
+        body = _sanitize(e.get("html", ""))
+        if not body.strip():
+            continue
+        extra += (f'<section class="content-section">'
+                  f'<h2 class="section-title">{_title_html(e.get("title", ""))}</h2>'
+                  f'<div class="section-divider"></div>{body}</section>')
+    if extra:
+        frag = BeautifulSoup(extra, "lxml")
+        new_secs = list((frag.body or frag).children)
+        anchor = _find_faq_section(article)
+        if anchor is None:
+            ctas = [s for s in article.find_all("section")
+                    if "cta-section" in (s.get("class") or [])]
+            anchor = ctas[-1] if ctas else None
+        if anchor is not None:
+            for ns in new_secs:
+                anchor.insert_before(ns)
+        else:
+            for ns in new_secs:
+                article.append(ns)
+
+
+# ---------------------------------------------------------------------- #
+# Images -> placeholder (content images only; keep logo/cert/flags/chrome)
+# ---------------------------------------------------------------------- #
+_IMG_KEEP = re.compile(r"logo|favicon|cert|flag|sprite|social", re.I)
+
+
+def _placeholder_images(root):
+    for img in root.find_all("img"):
+        p, skip = img.parent, False
+        while p is not None and getattr(p, "name", None):
+            if p.name in ("header", "nav", "footer", "aside"):
+                skip = True
+                break
+            p = p.parent
+        if skip:
+            continue
+        cls = " ".join(img.get("class") or [])
+        src = img.get("src", "") or ""
+        if _IMG_KEEP.search(cls) or _IMG_KEEP.search(src):
+            continue
+        img["src"] = PLACEHOLDER_SRC
+        classes = img.get("class") or []
+        if "api-img-placeholder" not in classes:
+            classes.append("api-img-placeholder")
+            img["class"] = classes
+        for a in ("srcset", "data-src", "data-srcset"):
+            if img.has_attr(a):
+                del img[a]
 
 
 def _approved_pages(state):

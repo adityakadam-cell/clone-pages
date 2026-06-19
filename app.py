@@ -160,6 +160,36 @@ def docs_check():
     }), (200 if ok_all else 503)
 
 
+@app.route("/ai-check")
+def ai_check():
+    """Confirm the Gemini AI builder is wired up. Visit after setting
+    GEMINI_API_KEY (or GOOGLE_API_KEY with the Generative Language API enabled)."""
+    from core import ai_writer
+    from config import Config
+    enabled = ai_writer.is_enabled()
+    ok_call, detail = False, ""
+    if enabled:
+        try:
+            plan = ai_writer.plan_page(
+                "Test Product",
+                [{"id": "specs", "heading": "Specifications", "kind": "text",
+                  "furniture": False}],
+                "## Specifications\nStandard: ASTM A312\nGrade: 304")
+            ok_call = isinstance(plan, dict)
+            detail = "model responded"
+        except Exception as exc:
+            detail = str(exc)[:300]
+    return jsonify({
+        "ai_enabled": enabled,
+        "model": Config.AI_MODEL,
+        "using_key": ("GEMINI_API_KEY" if Config.GEMINI_API_KEY
+                      else ("GOOGLE_API_KEY" if Config.GOOGLE_API_KEY else "none")),
+        "live_call_ok": ok_call,
+        "detail": detail or ("set GEMINI_API_KEY and enable the Generative "
+                             "Language API" if not enabled else ""),
+    }), (200 if (enabled and ok_call) else 503)
+
+
 @app.route("/restart")
 def restart():
     clear_sdata()
@@ -278,6 +308,39 @@ def download_one(filename):
 def api_agent6_zip():
     data = request.get_json(force=True)
     return jsonify(a6.zip_pages(data.get("filenames", [])))
+
+
+@app.route("/auto", methods=["POST"])
+def auto_build():
+    """One-click: run Analyze -> Sync -> Approve(next batch) -> Build -> Verify
+    end-to-end. The step stages stay visible; this just advances them for you."""
+    d = sdata()
+    if "agent2" not in d or "agent3" not in d:
+        flash("Add the design (Step 1) and content (Step 3) first.", "error")
+        return redirect(url_for("agent", n=FLOW[0]))
+    try:
+        d["agent4"] = a4.run(d)["data"]
+        d["agent5"] = a5.run(d)["data"]
+        prev = a7.preview(d)["data"]
+        ids = [it["id"] for it in prev.get("items", [])]
+        if not ids:
+            flash("Nothing left to build — every page is already done.", "ok")
+            return redirect(url_for("agent", n=8))
+        d["agent7"] = a7.approve(d, ids)["data"]
+        build = a6.build(d)
+        if not build["ok"]:
+            flash(build["error"], "error")
+            return redirect(url_for("agent", n=7))
+        d["built"] = build["data"]["built"]
+        registry.mark_built(build["data"]["built"])
+        d["agent8"] = a8.run(d)["data"]
+    except Exception as exc:  # pragma: no cover
+        log.exception("auto-build failed")
+        flash(f"Auto-build hit an error: {exc}", "error")
+        return redirect(url_for("agent", n=4))
+    flash(f"Auto-built {len(ids)} page(s). Review the verification below, "
+          f"then download.", "ok")
+    return redirect(url_for("agent", n=8))
 
 
 if __name__ == "__main__":

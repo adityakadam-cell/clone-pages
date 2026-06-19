@@ -22,6 +22,13 @@
   {% endfor %}
 </nav>
 
+{% if 'agent2' in done_keys and 'agent3' in done_keys %}
+<form method="post" action="{{ url_for('auto_build') }}" class="auto-bar">
+  <button class="btn auto" type="submit">&#9889; Auto-build with AI &rarr;</button>
+  <span class="auto-hint">Runs Analyze &middot; Sync &middot; Approve &middot; Build &middot; Verify automatically</span>
+</form>
+{% endif %}
+
 <main class="wrap">
   {% with msgs = get_flashed_messages(with_categories=true) %}
     {% for cat, msg in msgs %}
