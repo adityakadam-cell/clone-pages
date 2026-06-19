@@ -1,13 +1,15 @@
 """
 Agent 6 — Output & download.
 
-Builds each page by using the reference HTML as a DESIGN SHELL and injecting the
-Doc content into it (auto-detect):
-  * the reference page's subject (its first <h1> text) is replaced everywhere
+Uses the reference HTML as a design SHELL and injects the Doc content:
+  * the reference page's subject (its first banner <h1>) is replaced everywhere
     with the product title;
-  * the main content container is replaced with the Doc's structured HTML
-    (headings, paragraphs, tables, lists) in the same design;
-  * inline images become a placeholder, and any broken image swaps to it.
+  * the main <article> is replaced with the Doc's sections, re-styled with the
+    design's own content classes (.content-section / .section-title /
+    .section-text / .data-table ...), so it matches the design;
+  * the intro region (.*short-description) gets the Doc's lead-in paragraphs;
+  * the sidebar, banner, header and footer are preserved.
+Inline images become a placeholder; broken images swap to it.
 """
 import re
 import zipfile
@@ -80,35 +82,125 @@ def _js_block(design, template_html=""):
     return "\n".join(out)
 
 
-def _find_content_container(root, hero_h1):
-    """Pick the block that holds the page body text: most text, but not a
-    nav/header/footer region and not the hero (the element with the H1)."""
-    hero_ancestors = set(id(a) for a in (hero_h1.parents if hero_h1 else []))
-    best, best_len = None, 0
-    for el in root.find_all(["main", "article", "section", "div"]):
-        if el.name in ("nav", "header", "footer"):
-            continue
-        if el.find(["nav", "header", "footer"]):
-            continue
-        if hero_h1 and (el is hero_h1 or hero_h1 in el.descendants):
-            continue
-        if id(el) in hero_ancestors:
-            continue
-        text = el.get_text(" ", strip=True)
-        if len(text) >= 120 and len(text) > best_len:
-            best, best_len = el, len(text)
-    return best
+def _cls(el):
+    c = el.get("class")
+    return " ".join(c) if c else ""
+
+
+def _detect_vocab(scope):
+    """Learn the design's content class names from the reference content area."""
+    v = {"section": "", "title": "", "h3": "", "text": "",
+         "table": "", "table_wrap": "", "divider": ""}
+    h2 = scope.find("h2")
+    if h2:
+        v["title"] = _cls(h2)
+        anc = h2.find_parent(lambda t: t.name in ("section", "div") and t.get("class"))
+        if anc:
+            v["section"] = _cls(anc)
+        sib = h2.find_next_sibling()
+        if sib and getattr(sib, "name", None) == "div" and "divider" in _cls(sib):
+            v["divider"] = str(sib)
+    h3 = scope.find("h3")
+    if h3:
+        v["h3"] = _cls(h3)
+    p = scope.find("p", class_=True)
+    if p:
+        v["text"] = _cls(p)
+    tbl = scope.find("table")
+    if tbl:
+        v["table"] = _cls(tbl)
+        par = tbl.find_parent("div")
+        if par and par.get("class"):
+            v["table_wrap"] = _cls(par)
+    return v
+
+
+def _ca(name):
+    return f' class="{name}"' if name else ""
+
+
+def _doc_nodes(html):
+    frag = BeautifulSoup(html or "", "lxml")
+    root = frag.body or frag
+    return [n for n in root.children
+            if getattr(n, "name", None) or (isinstance(n, str) and n.strip())]
+
+
+def _style_table(node, v):
+    t = str(node)
+    if v["table"]:
+        t = re.sub(r"<table\b[^>]*>", f'<table class="{v["table"]}">', t, count=1)
+    if v["table_wrap"]:
+        t = f'<div class="{v["table_wrap"]}">{t}</div>'
+    return t
+
+
+def _style_sections(nodes, v):
+    """Turn the doc's heading/paragraph/table flow into design content-sections."""
+    sections, cur = [], {"title": None, "body": []}
+    for n in nodes:
+        nm = getattr(n, "name", None)
+        if nm in ("h1", "h2"):
+            if cur["title"] is not None or cur["body"]:
+                sections.append(cur)
+            cur = {"title": n.decode_contents(), "body": []}
+        elif nm == "h3":
+            cur["body"].append(f'<h3{_ca(v["h3"] or v["title"])}>{n.decode_contents()}</h3>')
+        elif nm == "table":
+            cur["body"].append(_style_table(n, v))
+        elif nm == "p":
+            cur["body"].append(f'<p{_ca(v["text"])}>{n.decode_contents()}</p>')
+        elif nm:
+            cur["body"].append(str(n))
+    if cur["title"] is not None or cur["body"]:
+        sections.append(cur)
+
+    html = []
+    for s in sections:
+        inner = ""
+        if s["title"] is not None:
+            inner += f'<h2{_ca(v["title"])}>{s["title"]}</h2>{v["divider"]}'
+        inner += "".join(s["body"])
+        html.append(f'<section{_ca(v["section"])}>{inner}</section>')
+    return "".join(html)
+
+
+def _style_intro(nodes, intro_cls):
+    """Lead-in paragraphs (before the first heading) for the intro region."""
+    out = []
+    for n in nodes:
+        nm = getattr(n, "name", None)
+        if nm == "p":
+            out.append(f'<div{_ca(intro_cls)}>{n.decode_contents()}</div>')
+        elif nm in ("ul", "ol"):
+            out.append(str(n))
+        elif nm:
+            out.append(str(n))
+    return "".join(out)
+
+
+def _split_intro(nodes):
+    """Return (intro_nodes_before_first_heading, section_nodes_from_first_heading)."""
+    for i, n in enumerate(nodes):
+        if getattr(n, "name", None) in ("h1", "h2"):
+            return nodes[:i], nodes[i:]
+    return nodes, []
+
+
+def _set_inner(el, html, soup):
+    el.clear()
+    frag = BeautifulSoup(html, "lxml")
+    for n in list((frag.body or frag).children):
+        el.append(n)
 
 
 def _inject(design, page):
-    """Return the modified design body (string) with title + content swapped."""
     template_html = design.get("template_html", "") or ""
     soup = BeautifulSoup(template_html, "lxml")
     root = soup.body or soup
-
     new_title = (page.get("product") or page.get("meta_title") or "").strip()
 
-    # 1. Title: set the first <h1>, then replace the reference subject elsewhere.
+    # 1. Title — banner H1, then replace the reference subject everywhere.
     h1 = root.find("h1")
     ref_title = h1.get_text(" ", strip=True) if h1 else ""
     if h1 and new_title:
@@ -119,29 +211,48 @@ def _inject(design, page):
             if ref_title in tn:
                 tn.replace_with(tn.replace(ref_title, new_title))
 
-    # 2. Content: drop the doc's own leading title (the hero already shows it),
-    #    then inject into the main content container.
+    # 2. Doc content -> intro + sections.
     content_html = page.get("content", "") or ""
-    content_html = re.sub(r"^\s*<h1>.*?</h1>", "", content_html, count=1,
-                          flags=re.S | re.I)
-    frag = BeautifulSoup(content_html, "lxml")
-    frag_root = frag.body or frag
-    nodes = [n for n in list(frag_root.children)]
+    content_html = re.sub(r"^\s*<h1>.*?</h1>", "", content_html, count=1, flags=re.S | re.I)
+    nodes = _doc_nodes(content_html)
+    intro_nodes, section_nodes = _split_intro(nodes)
 
-    container = _find_content_container(root, h1)
-    if container is not None and nodes:
-        container.clear()
-        for n in nodes:
-            container.append(n)
-    elif nodes:                       # no container found -> append a section
-        sec = soup.new_tag("section")
-        sec["class"] = "api-agent-content"
-        for n in nodes:
-            sec.append(n)
+    article = root.find("article") or _content_fallback(root, h1)
+    vocab = _detect_vocab(article) if article else {k: "" for k in
+            ("section", "title", "h3", "text", "table", "table_wrap", "divider")}
+
+    if article is not None:
+        body_nodes = section_nodes or nodes
+        _set_inner(article, _style_sections(body_nodes, vocab) or "<p></p>", soup)
+        if section_nodes:           # only split intro out when there are sections
+            intro_el = root.find(class_=re.compile("short-description"))
+            holder = intro_el.parent if intro_el else None
+            if holder is not None:
+                intro_cls = _cls(intro_el)
+                _set_inner(holder, _style_intro(intro_nodes, intro_cls)
+                           or f'<div{_ca(intro_cls)}></div>', soup)
+    else:
+        sec = soup.new_tag("section"); sec["class"] = "api-agent-content"
+        _set_inner(sec, _style_sections(nodes, vocab), soup)
         root.append(sec)
 
     body_html = root.decode_contents()
     return body_html.replace(IMAGE_MARK, PLACEHOLDER_IMG)
+
+
+def _content_fallback(root, h1):
+    best, best_len = None, 0
+    for el in root.find_all(["main", "section", "div"]):
+        if el.name in ("nav", "header", "footer"):
+            continue
+        if el.find(["nav", "header", "footer", "aside"]):
+            continue
+        if h1 and (el is h1 or h1 in el.descendants):
+            continue
+        text = el.get_text(" ", strip=True)
+        if len(text) >= 120 and len(text) > best_len:
+            best, best_len = el, len(text)
+    return best
 
 
 def _approved_pages(state):

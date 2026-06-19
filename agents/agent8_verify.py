@@ -14,7 +14,7 @@ import re
 from config import Config
 from core.utils import ok
 
-_CONTENT_RE = re.compile(r'<main class="api-agent-content">(.*?)</main>', re.S)
+_CONTENT_RE = re.compile(r"<article[^>]*>(.*?)</article>", re.S | re.I)
 _TITLE_RE = re.compile(r"<title>([^<]*)</title>")
 _DESC_RE = re.compile(r'<meta name="description" content="([^"]*)"')
 _TAGS_RE = re.compile(r"<[^>]+>")
@@ -33,7 +33,10 @@ def _read_built(filename: str) -> str:
 
 def _content_block(html: str) -> str:
     m = _CONTENT_RE.search(html)
-    return m.group(1).strip() if m else ""
+    if m:
+        return m.group(1).strip()
+    # fallback: the whole page (header/footer add a little noise but that's fine)
+    return html
 
 
 def _plain(text: str) -> str:
