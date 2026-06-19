@@ -28,7 +28,8 @@ def preview(state):
 
     todo, already = [], []
     for i, p in enumerate(pages):
-        (already if _slug(p, i) in done else todo).append((i, p))
+        is_done = _slug(p, i) in done or bool(p.get("status_done"))
+        (already if is_done else todo).append((i, p))
 
     batch = todo[:Config.MAX_BUILD_PAGES]          # only the next 5
     items = [{

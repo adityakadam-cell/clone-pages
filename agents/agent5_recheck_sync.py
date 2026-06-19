@@ -57,6 +57,7 @@ def run(state):
             "meta_description": page.get("meta_description", ""),
             "content_chars": len(body.strip()),
             "autofilled": fixes,
+            "status_done": bool(page.get("status_done")),
         })
 
     total_fixes = sum(len(p["_autofilled"]) for p in synced)

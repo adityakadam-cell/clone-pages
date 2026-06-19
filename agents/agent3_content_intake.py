@@ -94,13 +94,19 @@ def run_sheet(sheet_url, api_key: str = ""):
     if not rows:
         return fail("No rows found. Is the sheet shared as 'anyone with link'?")
 
-    pages, fetched, notes = [], 0, []
+    pages, fetched, notes, created = [], 0, [], 0
     for r in rows:
-        content, note, doc_url = _doc_content(r, api_key=api_key)
-        if note:
-            notes.append(f"{r.get('product','?')}: {note}")
-        if content and content != (r.get("doc") or "").strip():
-            fetched += 1
+        # A ticked "Created" column means: skip this row, do not rebuild it.
+        done = bool(r.get("status_done"))
+        if done:
+            created += 1
+        content, note, doc_url = ("", "", (r.get("doc_link") or ""))
+        if not done:
+            content, note, doc_url = _doc_content(r, api_key=api_key)
+            if note:
+                notes.append(f"{r.get('product','?')}: {note}")
+            if content and content != (r.get("doc") or "").strip():
+                fetched += 1
         pages.append({
             "product": r.get("product", ""),
             "slug": slugify(r.get("product", "")),
@@ -110,15 +116,19 @@ def run_sheet(sheet_url, api_key: str = ""):
             "meta_title": r.get("meta_title", ""),
             "meta_description": r.get("meta_description", ""),
             "source": "google-sheet",
+            "status_done": done,
             "_note": note,
         })
 
     msg = f"Read {len(pages)} rows; fetched content for {fetched} page(s)."
+    if created:
+        msg += f"  {created} row(s) already ticked 'Created' -> will be skipped."
     if not used_api:
         msg += (" (No Google API key set - Doc links can't be read, so "
                 "content was taken from the cell text only.)")
     elif notes:
         msg += f"  First issue -> {notes[0]}"
     data = {"mode": "sheet", "pages": pages, "count": len(pages),
-            "fetched": fetched, "used_api": used_api, "notes": notes[:20]}
+            "fetched": fetched, "used_api": used_api, "notes": notes[:20],
+            "created_skipped": created}
     return ok(data, msg)

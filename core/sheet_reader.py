@@ -33,7 +33,30 @@ COLUMN_MAP = {
     "url (link)": "page_url",
     "url(link)": "page_url",
     "web page link": "web_page_link",
+    "created": "created",
+    "created?": "created",
+    "is created": "created",
+    "page created": "created",
+    "status": "created",
+    "page status": "created",
+    "done": "created",
 }
+
+# Values in the "Created" column that mean "already done -> skip this row".
+TICK_WORDS = {"true", "yes", "y", "done", "created", "complete", "completed",
+              "x", "1", "✓", "✔", "✅", "✔️"}
+
+
+def _is_done(value, cell=None):
+    """A row is 'done' when its Created cell is a ticked checkbox (boolValue
+    True) or holds a yes/done-style value."""
+    if cell is not None:
+        bv = (cell.get("userEnteredValue", {}) or {}).get("boolValue")
+        if bv is True:
+            return True
+        if bv is False:
+            return False
+    return (value or "").strip().lower() in TICK_WORDS
 
 # Columns whose link (not display text) is what we actually want.
 LINK_FIELDS = {"doc", "page_url", "web_page_link"}
@@ -72,7 +95,11 @@ def read_sheet(sheet_url: str, limit: int = 500):
     for raw in rows[1:limit + 1]:
         rec = {}
         for field, idx in mapped_idx.items():
-            rec[field] = raw[idx].strip() if idx < len(raw) else ""
+            val = raw[idx].strip() if idx < len(raw) else ""
+            rec[field] = val
+            if field == "created":
+                rec["status_done"] = _is_done(val)
+        rec.setdefault("status_done", False)
         if rec.get("product"):
             out.append(rec)
     return out
@@ -132,10 +159,14 @@ def parse_grid(grid_rows: list, limit: int = 500) -> list:
         cells = row.get("values", [])
         rec = {}
         for field, i in idx_map.items():
-            value, link = _cell_value_and_link(cells[i]) if i < len(cells) else ("", "")
+            cell = cells[i] if i < len(cells) else {}
+            value, link = _cell_value_and_link(cell)
             rec[field] = value
             if field in LINK_FIELDS:
                 rec[f"{field}_link"] = link
+            if field == "created":
+                rec["status_done"] = _is_done(value, cell)
+        rec.setdefault("status_done", False)
         if rec.get("product"):
             out.append(rec)
     return out
