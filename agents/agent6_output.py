@@ -3,15 +3,16 @@ Agent 6 — Output & download.
 
 Reference HTML = design SHELL; the Doc content is injected into it:
   * banner <h1> subject -> product title (everywhere);
-  * the main <article> is replaced with the Doc's sections, re-styled with the
-    design's content classes (.content-section/.section-title/.section-text/
-    .data-table);
+  * the design's MAIN content COLUMN (any layout: <article>/<main>/largest
+    block) is replaced with the Doc's sections, re-styled with the design's
+    content classes (.content-section/.section-title/.section-text/.data-table);
   * SPECIAL sections are rebuilt into the design's own components when detected:
-      - "FAQ"            -> .faq-item / .faq-q / .faq-a accordion (+ toggle JS);
+      - "FAQ"             -> .faq-item / .faq-q / .faq-a accordion (+ toggle JS);
       - "...Applications" -> .card-app-card grid;
-      - "Types..."       -> .form-card grid;
-  * intro region (.*short-description) gets the Doc's lead-in paragraphs;
-  * sidebar, banner, header, footer preserved.
+      - "Types/Forms..."  -> .form-card grid;
+  * intro region (.*short-description / lead / intro) gets the Doc's lead-in;
+  * header, nav, footer and sidebar are ALWAYS preserved; any other body
+    section the Doc has no content for is removed (fully automatic).
 Inline images -> placeholder; broken images swap to it.
 """
 import re
@@ -336,6 +337,83 @@ def _content_fallback(root, h1):
     return best
 
 
+def _main_region(root, h1):
+    """Find the design's main content COLUMN for ANY layout. Trust the
+    semantic landmarks first (a sparse template may have little placeholder
+    text, so length is NOT required for <article>/<main>):
+      1. <article> that holds real content and isn't inside chrome;
+      2. <main>, narrowed away from any sidebar/aside it contains;
+      3. largest non-chrome text block (fallback heuristic)."""
+    art = root.find("article")
+    if (art is not None
+            and not art.find_parent(["header", "nav", "footer"])
+            and art.find(["h1", "h2", "h3", "h4", "p", "table", "ul", "ol"])):
+        return art
+
+    main = root.find("main")
+    if main is not None and not main.find_parent(["header", "nav", "footer"]):
+        aside = main.find("aside") or main.find(class_=re.compile(r"sidebar|side-bar"))
+        if aside is not None:
+            best, best_len = None, 0
+            for el in main.find_all(["article", "section", "div"]):
+                if el is aside or aside in el.descendants:
+                    continue
+                if el.find(["aside"]) or el.find(class_=re.compile(r"sidebar|side-bar")):
+                    continue
+                t = len(el.get_text(" ", strip=True))
+                if t > best_len:
+                    best, best_len = el, t
+            if best is not None and best_len > 0:
+                return best
+        return main
+
+    return _content_fallback(root, h1)
+
+
+_CHROME_RE = re.compile(
+    r"(header|nav(bar)?|footer|sidebar|side-bar|aside|widget|rail|breadcrumb|"
+    r"banner|hero|menu|topbar|top-bar|cookie|newsletter|subscribe|enquiry|"
+    r"quote|contact|logo|search)", re.I)
+
+
+def _is_chrome(el):
+    """True for header/nav/footer/sidebar/banner-type blocks that must survive
+    regardless of the Doc content."""
+    if getattr(el, "name", None) in ("header", "nav", "footer", "aside"):
+        return True
+    if el.find_parent(["header", "nav", "footer", "aside"]):
+        return True
+    if _CHROME_RE.search(" ".join(el.get("class") or [])):
+        return True
+    if el.find(["header", "nav", "footer"]):
+        return True
+    return False
+
+
+def _strip_unmatched(root, main_el):
+    """Remove body sections not backed by Doc content. All Doc content lives
+    inside main_el, so any sibling block along main_el's ancestor chain that
+    isn't chrome (header/nav/footer/sidebar/banner) is design-only -> drop it.
+    Header, footer, nav and sidebar are always kept."""
+    if main_el is None:
+        return
+    node, guard = main_el, 0
+    while node is not None and getattr(node, "name", None) != "body" and guard < 40:
+        guard += 1
+        parent = node.parent
+        if parent is None:
+            break
+        for sib in list(node.find_next_siblings()) + list(node.find_previous_siblings()):
+            if getattr(sib, "name", None) is None:
+                continue
+            if sib is main_el or main_el in sib.descendants:
+                continue
+            if _is_chrome(sib):
+                continue
+            sib.decompose()
+        node = parent
+
+
 def _inject(design, page):
     template_html = design.get("template_html", "") or ""
     soup = BeautifulSoup(template_html, "lxml")
@@ -359,19 +437,27 @@ def _inject(design, page):
     nodes = _doc_nodes(content_html)
     intro_nodes, section_nodes = _split_intro(nodes)
 
-    article = root.find("article") or _content_fallback(root, h1)
+    article = _main_region(root, h1)
     vocab = _detect_vocab(article)
 
     if article is not None:
-        body_nodes = section_nodes or nodes
-        _set_inner(article, _style_sections(body_nodes, vocab, special) or "<p></p>")
-        if section_nodes:
-            intro_el = root.find(class_=re.compile("short-description"))
-            holder = intro_el.parent if intro_el else None
-            if holder is not None:
-                intro_cls = _cls(intro_el)
-                _set_inner(holder, _style_intro(intro_nodes, intro_cls)
-                           or f'<div{_ca(intro_cls)}></div>')
+        intro_el = root.find(
+            class_=re.compile(r"short-description|lead-?in|intro|excerpt|summary"))
+        holder = intro_el.parent if intro_el else None
+        # Only split the intro into its own region when that region is SEPARATE
+        # from the main content column (otherwise we'd overwrite what we inject).
+        sep_intro = (bool(section_nodes) and holder is not None
+                     and holder is not article
+                     and article not in holder.descendants
+                     and holder not in article.descendants)
+        if sep_intro:
+            _set_inner(article, _style_sections(section_nodes, vocab, special) or "<p></p>")
+            intro_cls = _cls(intro_el)
+            _set_inner(holder, _style_intro(intro_nodes, intro_cls)
+                       or f'<div{_ca(intro_cls)}></div>')
+        else:
+            _set_inner(article, _style_sections(nodes, vocab, special) or "<p></p>")
+        _strip_unmatched(root, article)
     else:
         sec = soup.new_tag("section")
         sec["class"] = "api-agent-content"
